@@ -1,0 +1,18 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.log
+# Local kubeconfigs and chaos-run output; summaries worth keeping go in docs/.
+kubeconfig*
+runs/
