@@ -1,0 +1,21 @@
+# Local Postgres for slices 1 to 3 (spec §9). The mock payer joins in slice 2.
+name: coverage-check
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: coverage_check
+      POSTGRES_DB: coverage_check
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env (see .env.example)}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18 and later keep data under this path, not .../data.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "coverage_check"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  postgres-data:

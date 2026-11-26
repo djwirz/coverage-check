@@ -3,7 +3,7 @@
 A service that checks insurance coverage in bulk against a rate-limited, unreliable payer API. Workers share one rate limit and one concurrency cap, so the payer's limit is never exceeded, and every check ends in exactly one final state, as FHIR R4. It runs on Kubernetes (kind) and keeps those promises when pods are killed and scaled mid-batch. Use they/them for Dan.
 
 ## Status
-Planning: `docs/spec.md` and ADRs 0001–0007 are proposed in PR #1. The ADRs say `Accepted`, and merging accepts them. Open questions are in spec §13. Settle each one by the slice it names, and the rest before slice 1. The judgment behind the project is in `docs/artifact-spec.md`.
+Slice 1 (spec §11) is built: the project and CI, the schema, the batch API and members from `synthetic-cohort` (ADR 0008). Next is slice 2, the mock payer. `docs/spec.md` and the ADRs were accepted in PR #1. Open questions are in spec §13; each is settled by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
 
 ## How we work
 - Pull requests only. Never push to `main`. Merged PRs are the project's record.
