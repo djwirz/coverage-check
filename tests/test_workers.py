@@ -477,3 +477,20 @@ def test_a_requeued_exception_is_asked_afresh(
     assert [e["idempotency_key"] for e in log] == [f"{check['id']}:{c}" for c in (0, 0, 1)]
     assert [e["billable"] for e in log] == [False, False, True]
     assert rows.execute("SELECT count(*) AS n FROM attempts").fetchone() == {"n": 3}
+
+
+def test_the_heartbeat_says_alive_and_ready_only_while_the_database_answers(
+    database_url: str, tmp_path: Path
+) -> None:
+    async def beat(url: str, directory: Path) -> None:
+        async with AsyncConnectionPool(url, open=False) as pool:
+            beating = asyncio.create_task(worker.heartbeat(pool, directory, seconds=0.2))
+            await asyncio.sleep(0.6)
+            beating.cancel()
+
+    asyncio.run(beat(database_url, tmp_path / "up"))
+    assert sorted(p.name for p in (tmp_path / "up").iterdir()) == ["alive", "ready"]
+    (tmp_path / "down").mkdir()
+    (tmp_path / "down" / "ready").touch()  # left from when the database was there
+    asyncio.run(beat("postgresql://x:y@127.0.0.1:9/z", tmp_path / "down"))
+    assert [p.name for p in (tmp_path / "down").iterdir()] == ["alive"]

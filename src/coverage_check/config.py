@@ -52,6 +52,8 @@ class WorkerSettings:
     # How long a stopping worker waits for calls in flight before it hands their checks back.
     # Longer than the attempt timeout, so normally nothing is handed back.
     shutdown_grace_seconds: float = 40
+    # Where to touch the files Kubernetes probes look at. Empty: don't.
+    health_dir: str = ""
 
     def __post_init__(self) -> None:
         # In any one second a token bucket can let through burst + rate requests.

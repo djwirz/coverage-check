@@ -1,0 +1,70 @@
+# One address for the API's pods; only ready ones get traffic.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector: {app.kubernetes.io/name: api}
+  ports:
+    - {name: http, port: 8000}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: api}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: api}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+          image: coverage-check:local
+          imagePullPolicy: Never
+          command:
+            - uvicorn
+            - --factory
+            - coverage_check.api:create_app
+            - --host=0.0.0.0
+            - --port=8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: coverage-check, key: DATABASE_URL}
+            - name: COVERAGE_CHECK_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: coverage-check, key: COVERAGE_CHECK_API_TOKEN}
+          ports:
+            - {containerPort: 8000}
+          startupProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 2
+            failureThreshold: 30
+          # Fails while Postgres is unreachable: no traffic, but no restart either.
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            periodSeconds: 5
+            timeoutSeconds: 4
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: tmp, emptyDir: {}}

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
@@ -19,6 +19,7 @@ from coverage_check.models import Batch, BatchRequest, Check, Exceptions
 
 bearer = HTTPBearer(auto_error=False)
 DATABASE_WAIT_SECONDS = 5
+READY_WAIT_SECONDS = 2
 
 
 def require_token(
@@ -66,15 +67,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="coverage-check",
         lifespan=lifespan,
-        dependencies=[Depends(require_token)],
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
     app.state.settings = settings
     problems.install(app)
+    # Everything that touches data is on this router, behind the token.
+    protected = APIRouter(dependencies=[Depends(require_token)])
 
-    @app.post(
+    # For Kubernetes probes: no token, and nothing to learn from them.
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz(request: Request) -> dict[str, str]:
+        # A database that can't be reached becomes a 503 (problems.py).
+        async with request.app.state.pool.connection(timeout=READY_WAIT_SECONDS) as conn:
+            await conn.execute("SELECT 1")
+        return {"status": "ok"}
+
+    @protected.post(
         "/batches",
         status_code=201,
         responses={200: {"description": "Same key and body"}, 409: {"description": "Key reused"}},
@@ -94,27 +108,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Location"] = f"/batches/{batch_id}"
         return batch
 
-    @app.get("/batches/{batch_id}")
+    @protected.get("/batches/{batch_id}")
     async def read_batch(batch_id: UUID, conn: Connection) -> Batch:
         batch = await batches.get_batch(conn, batch_id)
         if batch is None:
             raise HTTPException(404, "No such batch.")
         return batch
 
-    @app.get("/checks/{check_id}")
+    @protected.get("/checks/{check_id}")
     async def read_check(check_id: UUID, conn: Connection) -> Check:
         check = await batches.get_check(conn, check_id)
         if check is None:
             raise HTTPException(404, "No such check.")
         return check
 
-    @app.get("/exceptions")
+    @protected.get("/exceptions")
     async def read_exceptions(
         conn: Connection, limit: Annotated[int, Query(ge=1, le=1000)] = 100
     ) -> Exceptions:
         return Exceptions(exceptions=await batches.list_exceptions(conn, limit))
 
-    @app.post(
+    @protected.post(
         "/exceptions/{check_id}/requeue", responses={409: {"description": "Not an exception"}}
     )
     async def requeue(check_id: UUID, conn: Connection) -> Check:
@@ -126,4 +140,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "No such check.")
         return check
 
+    app.include_router(protected)
     return app

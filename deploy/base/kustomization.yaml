@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: coverage-check
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - migrate.yaml
+  - mock-payer.yaml
+  - api.yaml
+  - worker.yaml
+# Generated names carry a hash of the content, so a change rolls the pods that use it.
+configMapGenerator:
+  - name: worker-config
+    envs:
+      - worker.env
+  - name: mock-payer-profile
+    files:
+      - profile.toml=mock-payer/default.toml

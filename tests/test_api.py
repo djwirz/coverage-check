@@ -8,11 +8,15 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from uuid import uuid4
 
+import httpx2
 import psycopg
 import pytest
+from psycopg_pool import AsyncConnectionPool
 from starlette.testclient import TestClient
 
+from coverage_check.api import create_app
 from coverage_check.batches import submit_batch
+from coverage_check.config import Settings
 from coverage_check.seed import sample_batch
 
 CHECK = {
@@ -194,6 +198,39 @@ def test_every_endpoint_needs_the_token(
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"] == "Bearer"
     assert count(db, "batches") == 0
+
+
+def test_only_the_probes_are_open(client: TestClient) -> None:
+    """Every route there is, so a new one can't be added without the token by accident."""
+    app: Any = client.app
+    open_to_all = set()
+    for route in app.openapi()["paths"]:
+        path = route.replace("{batch_id}", str(uuid4())).replace("{check_id}", str(uuid4()))
+        for method in app.openapi()["paths"][route]:
+            response = client.request(method, path, headers={"Authorization": "Bearer no"})
+            if response.status_code != 401:
+                open_to_all.add(route)
+    assert open_to_all == {"/healthz", "/readyz"}
+    assert client.get("/healthz", headers={"Authorization": ""}).json() == {"status": "ok"}
+    assert client.get("/readyz", headers={"Authorization": ""}).json() == {"status": "ok"}
+
+
+def test_not_ready_without_a_database_but_still_alive() -> None:
+    settings = Settings(database_url="postgresql://x:y@127.0.0.1:9/z", api_token="t")  # noqa: S106
+    app = create_app(settings)
+    pool = AsyncConnectionPool(settings.database_url, open=False)
+
+    async def probe() -> tuple[int, int]:
+        await pool.open(wait=False)
+        app.state.pool = pool
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://api") as client:
+            ready = await client.get("/readyz")
+            alive = await client.get("/healthz")
+        await pool.close()
+        return ready.status_code, alive.status_code
+
+    assert asyncio.run(probe()) == (503, 200)
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
