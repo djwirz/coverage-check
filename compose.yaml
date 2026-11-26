@@ -1,4 +1,4 @@
-# Local Postgres for slices 1 to 3 (spec §9). The mock payer joins in slice 2.
+# Local Postgres and mock payer for slices 1 to 3 (spec §9).
 name: coverage-check
 services:
   postgres:
@@ -17,5 +17,36 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+  mock-payer:
+    build: .
+    image: coverage-check:dev
+    command:
+      - uvicorn
+      - --factory
+      - coverage_check.mock_payer.app:create_app
+      - --host=0.0.0.0
+      - --port=8000
+    environment:
+      # MOCK_PAYER_PROFILE=calm turns the injected faults off.
+      MOCK_PAYER_PROFILE: /etc/mock-payer/${MOCK_PAYER_PROFILE:-default}.toml
+      MOCK_PAYER_DB: /data/mock-payer.sqlite
+    ports:
+      - "127.0.0.1:${MOCK_PAYER_PORT:-8001}:8000"
+    volumes:
+      - ./config/mock-payer:/etc/mock-payer:ro
+      - payer-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz")
+      interval: 2s
+      timeout: 3s
+      retries: 30
 volumes:
   postgres-data:
+  payer-data:

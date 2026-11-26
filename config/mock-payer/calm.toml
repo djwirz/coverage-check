@@ -1,0 +1,7 @@
+# No injected faults. The limits still apply.
+seed = 4711
+rate_limit_per_second = 20
+max_in_flight = 10
+retry_after_seconds = 2
+latency_min_seconds = 0.05
+latency_max_seconds = 0.3

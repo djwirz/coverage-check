@@ -1,0 +1,22 @@
+# A moderately bad day. What each fault stands for, and its sources: docs/mock-payer.md.
+seed = 4711
+
+# The payer's own limits. The engine's limiter must stay under these (invariant 1).
+rate_limit_per_second = 20
+max_in_flight = 10
+retry_after_seconds = 2
+
+latency_min_seconds = 0.05
+latency_max_seconds = 0.3
+
+# Share of requests that get each fault. The rest are answered normally.
+throttle_rate = 0.02
+server_error_rate = 0.03
+malformed_rate = 0.01
+slow_rate = 0.03
+timeout_rate = 0.01
+late_rate = 0.01
+
+slow_seconds = 3
+timeout_seconds = 30
+late_seconds = 15
