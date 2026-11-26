@@ -47,16 +47,18 @@ Disturbs a running batch and checks the invariants (next section).
 
 `make chaos` submits a batch and, as it progresses: kills a worker pod outright and deletes another; scales workers to 10, to 1 and back to 3; deletes the Postgres pod; makes the payer fail half its requests for a while; and tries to evict both API pods (the second eviction is refused). Then it runs the invariant report, and checks that leases really expired and the payer really was degraded.
 
-**Measured in GitHub Actions**, 3,000 checks, three runs each, on 2026-11-26:
+**Measured in GitHub Actions**, 3,000 checks, six runs each, on 2026-11-26:
 
 | | Time | Payer requests a second | Invariants |
 |---|---|---|---|
-| Undisturbed | just under four minutes, within a few seconds of each other | about 14 | all six passed, three times |
-| Under chaos | about four and a half minutes | 12 to 13 | all six passed, three times |
+| Undisturbed | about four minutes | 13 to 14 | all six passed, every run |
+| Under chaos | four and a half to five minutes | 12 to 13 | all six passed, every run |
 
-The most the payer saw in any second was 17 or 18, against its limit of 20, and never more than 8 requests in flight against 10. No check was lost, none finished twice and none was billed twice.
+The most the payer saw in any second was 17 to 19, against its limit of 20, and never more than 8 requests in flight against 10. No check was lost, none finished twice and none was billed twice.
 
-**Against what the limit allows:** the limiter is set to 16 a second, below the payer's 20, to leave room for network jitter. An undisturbed batch took about a seventh longer than 16 a second would. The likely reasons are calls that hang filling the in-flight cap, and the batch waiting on the last of them; an earlier run on a laptop showed both, but these runs weren't broken down.
+**Against what the limit allows:** the limiter is set to 16 a second, below the payer's 20, to leave room for network jitter. An undisturbed batch took roughly a sixth to a fifth longer than 16 a second would. The likely reasons are calls that hang filling the in-flight cap, and the batch waiting on the last of them; an earlier run on a laptop showed both, but these runs weren't broken down.
+
+**The margin is thinner than it looks.** The limiter never lets more than 18 requests start in a second, yet the payer has seen 19: requests that set off apart can arrive closer together. On a network with more delay than one machine's, the setting would need to come down.
 
 These are shared CI machines and a mock payer whose failure rates are our own choice, so read the figures as the shape, not a benchmark.
 
