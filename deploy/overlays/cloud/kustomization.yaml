@@ -1,0 +1,17 @@
+# The demo window on EKS (ADR 0014): the same objects and the same payer as `local`.
+# The image name is left as it is here, because the real one holds the account ID:
+# scripts/cloud/up.sh puts it in as it applies.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: coverage-check
+resources:
+  - ../../base
+  - storage-class.yaml
+patches:
+  # kind has the image loaded into its nodes; here the nodes pull it from the registry.
+  - target: {kind: Deployment, name: "api|worker|mock-payer|metrics"}
+    patch: |-
+      - {op: replace, path: /spec/template/spec/containers/0/imagePullPolicy, value: IfNotPresent}
+  - target: {kind: Job, name: migrate}
+    patch: |-
+      - {op: replace, path: /spec/template/spec/containers/0/imagePullPolicy, value: IfNotPresent}

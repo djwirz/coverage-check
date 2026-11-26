@@ -20,3 +20,6 @@ runs/
 batch*.json
 # The FHIR validator jar, its packages and the examples it checks.
 .cache/
+# CDK's output and the packages of its pinned CLI.
+cdk.out/
+node_modules/

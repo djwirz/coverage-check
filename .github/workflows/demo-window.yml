@@ -1,0 +1,118 @@
+name: Demo window
+
+# Create the EKS demo cluster, measure on it, destroy it (ADR 0014). Started by hand. It
+# costs money while it runs, so it waits for approval in the `demo` environment, which only
+# `main` may use. Teardown is part of this job, and runs even when a step before it fails or
+# the run is cancelled. If it still didn't finish, run "Demo destroy".
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-cluster
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  window:
+    name: Deploy, measure, destroy
+    runs-on: ubuntu-latest
+    environment: demo
+    # Above the sum of the step limits, so a slow step is cut and teardown still runs.
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      id-token: write # the OIDC token for the deploy role
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: uv sync --locked
+
+      # A session lasts an hour and the window is longer, so each long step gets a new one.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+          unset-current-credentials: true
+      - name: Create the cluster
+        run: npx cdk deploy Demo --require-approval never --progress events
+        timeout-minutes: 45
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+          unset-current-credentials: true
+      - name: Deploy the system
+        run: ./scripts/cloud/up.sh
+        timeout-minutes: 25
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+          unset-current-credentials: true
+      - name: An undisturbed batch of 3,000, with every check
+        run: ./scripts/cloud/measure.sh e2e
+        timeout-minutes: 20
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+          unset-current-credentials: true
+      - name: Chaos 1
+        run: ./scripts/cloud/measure.sh chaos
+        timeout-minutes: 25
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+          unset-current-credentials: true
+      - name: Chaos 2
+        run: ./scripts/cloud/measure.sh chaos
+        timeout-minutes: 25
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+          unset-current-credentials: true
+      - name: Chaos 3
+        run: ./scripts/cloud/measure.sh chaos
+        timeout-minutes: 25
+
+      - name: What the payer saw
+        if: always()
+        run: |
+          {
+            echo '```'
+            grep -hE 'invariant 1:|pace:|checks finished in' .cache/demo-*.log || echo "nothing measured"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+          unset-current-credentials: true
+      - name: Destroy everything
+        if: always()
+        run: ./scripts/cloud/down.sh
+        timeout-minutes: 45
+      - name: Is anything left?
+        if: always()
+        run: ./scripts/cloud/leftovers.sh
+        timeout-minutes: 5
