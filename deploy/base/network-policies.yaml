@@ -7,7 +7,7 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
 ---
-# Only what holds or changes data may reach the database.
+# Only what holds, changes or counts the data may reach the database.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,7 +20,7 @@ spec:
     - from:
         - podSelector:
             matchExpressions:
-              - {key: app.kubernetes.io/name, operator: In, values: [api, worker, migrate]}
+              - {key: app.kubernetes.io/name, operator: In, values: [api, worker, migrate, metrics]}
       ports:
         - {port: 5432}
 ---

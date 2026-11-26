@@ -1,0 +1,107 @@
+# Each rule fires when it should and stays quiet on an ordinary run (promtool test rules).
+rule_files:
+  - ../../deploy/base/observability/alerts.yml
+evaluation_interval: 5s
+tests:
+  - name: an ordinary run at 16 a second raises nothing
+    interval: 5s
+    input_series:
+      - series: 'mock_payer_requests_total{behaviour="ok"}'
+        values: '0+80x60'
+      - series: 'mock_payer_requests_total{behaviour="rate_limit"}'
+        values: '0x60'
+      # The random 429s a payer gives anyway are not "over the limit".
+      - series: 'mock_payer_requests_total{behaviour="throttle"}'
+        values: '0+2x60'
+      - series: mock_payer_rate_limit_per_second
+        values: '20x60'
+      - series: 'coverage_check_final_checks{result="exception", reason="member_not_found"}'
+        values: '0+20x60'
+      - series: 'coverage_check_final_checks{result="exception", reason="payer_unavailable"}'
+        values: '0x60'
+      - series: coverage_check_oldest_lease_age_seconds
+        values: '30x60'
+      - series: 'up{job="engine"}'
+        values: '1x60'
+      - series: coverage_check_database_up
+        values: '1x60'
+    alert_rule_test:
+      - {eval_time: 4m, alertname: PayerRateNearLimit, exp_alerts: []}
+      - {eval_time: 4m, alertname: PayerOverLimit, exp_alerts: []}
+      - {eval_time: 4m, alertname: ExceptionsRising, exp_alerts: []}
+      - {eval_time: 4m, alertname: LeaseStuck, exp_alerts: []}
+      - {eval_time: 4m, alertname: TelemetryMissing, exp_alerts: []}
+  - name: near the limit for a minute
+    interval: 5s
+    input_series:
+      - series: 'mock_payer_requests_total{behaviour="ok"}'
+        values: '0+90x60'
+      - series: mock_payer_rate_limit_per_second
+        values: '20x60'
+    alert_rule_test:
+      - {eval_time: 30s, alertname: PayerRateNearLimit, exp_alerts: []}
+      - eval_time: 3m
+        alertname: PayerRateNearLimit
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: The payer is getting more than 85% of its rate limit, and has for a minute.
+              runbook: docs/runbook.md#payerratenearlimit
+  - name: one refusal for being over is enough
+    interval: 5s
+    input_series:
+      - series: 'mock_payer_requests_total{behaviour="in_flight_limit"}'
+        values: '0x12 1x48'
+    alert_rule_test:
+      - {eval_time: 55s, alertname: PayerOverLimit, exp_alerts: []}
+      - eval_time: 90s
+        alertname: PayerOverLimit
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: The payer refused a request for being over its limit.
+              runbook: docs/runbook.md#payeroverlimit
+  - name: exceptions that are not about the member
+    interval: 5s
+    input_series:
+      - series: 'coverage_check_final_checks{result="exception", reason="payer_unavailable"}'
+        values: '0x12 0+3x48'
+    alert_rule_test:
+      - {eval_time: 1m, alertname: ExceptionsRising, exp_alerts: []}
+      - eval_time: 3m
+        alertname: ExceptionsRising
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: Checks are failing for reasons that are not about the member.
+              runbook: docs/runbook.md#exceptionsrising
+  - name: a lease nobody takes back
+    interval: 5s
+    input_series:
+      - series: coverage_check_oldest_lease_age_seconds
+        values: '0+5x60'
+    alert_rule_test:
+      - {eval_time: 135s, alertname: LeaseStuck, exp_alerts: []}
+      - eval_time: 145s
+        alertname: LeaseStuck
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: A check has been leased for over three lease lengths.
+              runbook: docs/runbook.md#leasestuck
+  - name: the numbers stop coming
+    interval: 5s
+    input_series:
+      - series: 'up{job="engine"}'
+        values: '1x12 0x48'
+      - series: coverage_check_database_up
+        values: '1x60'
+    alert_rule_test:
+      - {eval_time: 90s, alertname: TelemetryMissing, exp_alerts: []}
+      - eval_time: 3m
+        alertname: TelemetryMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, job: engine}
+            exp_annotations:
+              summary: Prometheus cannot read the engine's or the payer's numbers.
+              runbook: docs/runbook.md#telemetrymissing

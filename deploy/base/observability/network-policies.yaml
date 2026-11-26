@@ -1,0 +1,77 @@
+# Added to deny-all-ingress (../network-policies.yaml): who may reach what here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metrics-from-prometheus
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: metrics}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports:
+        - {port: 9000}
+---
+# The payer's metrics port only. Its eligibility port stays for workers alone.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mock-payer-metrics-from-prometheus
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: mock-payer}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: prometheus}
+      ports:
+        - {port: 9100}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector-from-api-worker
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: otel-collector}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [api, worker]}
+      ports:
+        - {port: 4318}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jaeger-from-collector
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: jaeger}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: otel-collector}
+      ports:
+        - {port: 4317}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-from-grafana
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: grafana}
+      ports:
+        - {port: 9090}

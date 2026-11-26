@@ -1,0 +1,56 @@
+# Takes spans from the API and the workers and passes them on, so they know one address and
+# not the trace store behind it (ADR 0013).
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+spec:
+  selector: {app.kubernetes.io/name: otel-collector}
+  ports:
+    - {name: otlp-http, port: 4318}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: otel-collector}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: otel-collector}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector:0.166.0@sha256:5dfb40297a8da893e4e9b6b98d3ddbdd9082f73611170d6381e355e08b235334
+          args: [--config=/etc/otelcol/config.yaml]
+          ports:
+            - {containerPort: 4318}
+          readinessProbe:
+            httpGet: {path: /, port: 13133}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /, port: 13133}
+            periodSeconds: 10
+            initialDelaySeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/otelcol, readOnly: true}
+      volumes:
+        - {name: config, configMap: {name: otel-collector-config}}

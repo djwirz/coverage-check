@@ -24,6 +24,16 @@ log = logging.getLogger("coverage_check.metrics")
 CONNECT_TIMEOUT_SECONDS = 3
 STATES = ("queued", "leased", "done", "exception")
 SECONDS_TO_FINAL = (1, 5, 10, 30, 60, 120, 300, 600, 1800)
+# Shown at zero before the first one, or a rise from nothing would not look like a rise.
+EXCEPTION_REASONS = (
+    "member_not_found",
+    "multiple_matches",
+    "payer_unavailable",
+    "malformed_response",
+    "invalid_request",
+    "key_reused",
+    "unexpected_status",
+)
 
 # An attempt whose lease ran out is first marked lease_expired, and renamed to late:<class> if
 # its reply arrives after all. Counting both as one thing keeps the counters from going down.
@@ -42,10 +52,14 @@ def _read(conn: psycopg.Connection[Any]) -> Iterable[Metric]:
         "Final checks by result, and for exceptions the reason.",
         labels=["result", "reason"],
     )
+    totals = {("covered", ""): 0, ("not_covered", ""): 0}
+    totals |= {("exception", reason): 0 for reason in EXCEPTION_REASONS}
     for result, reason, count in conn.execute(
         "SELECT coalesce(outcome, 'exception'), coalesce(exception_reason, ''), count(*)"
         " FROM checks WHERE state IN ('done', 'exception') GROUP BY 1, 2"
     ):
+        totals[(result, reason)] = count
+    for (result, reason), count in totals.items():
         final.add_metric([result, reason], count)
     yield final
 

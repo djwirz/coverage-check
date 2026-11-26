@@ -31,8 +31,18 @@ expect() { # yes|no from host port
 expect yes worker mock-payer 8000
 expect yes worker postgres 5432
 expect yes api postgres 5432
+expect yes metrics postgres 5432
+expect yes api otel-collector 4318
+expect yes worker otel-collector 4318
 # The same targets, from pods that aren't allowed.
 expect no api mock-payer 8000
 expect no mock-payer postgres 5432
 expect no worker api 8000
+# The payer's metrics port is for Prometheus, and reading it gives no way to the other one.
+expect no worker mock-payer 9100
+expect no metrics mock-payer 8000
+expect no api metrics 9000
+expect no api prometheus 9090
+expect no worker jaeger 4317
+expect no mock-payer otel-collector 4318
 exit $failed

@@ -187,3 +187,23 @@ def test_without_tracing_nothing_is_stored(database_url: str, db: psycopg.Connec
 
     asyncio.run(go())
     assert db.execute("SELECT DISTINCT traceparent FROM checks").fetchall() == [(None,)]
+
+
+def test_a_collector_that_is_away_changes_nothing(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
+    tracing.configure("test")
+    try:
+        with serving(payer_profile(), tmp_path / "payer.sqlite") as payer_url:
+            batch_id = submit(database_url)
+            work(settings(database_url, payer_url))
+    finally:
+        tracing.shutdown()
+        tracing.use(NoOpTracerProvider())
+    with psycopg.connect(database_url) as conn:
+        row = conn.execute(
+            "SELECT count(*) FROM checks WHERE batch_id = %s AND state IN ('queued', 'leased')",
+            (batch_id,),
+        ).fetchone()
+    assert row == (0,)

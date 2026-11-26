@@ -6,6 +6,7 @@ spec:
   selector: {app.kubernetes.io/name: mock-payer}
   ports:
     - {name: http, port: 8000}
+    - {name: metrics, port: 9100}
 ---
 # The payer's request log is the evidence for invariant 1, so it outlives the pod.
 apiVersion: v1
@@ -52,8 +53,10 @@ spec:
           env:
             - {name: MOCK_PAYER_PROFILE, value: /etc/mock-payer/profile.toml}
             - {name: MOCK_PAYER_DB, value: /data/mock-payer.sqlite}
+            - {name: MOCK_PAYER_METRICS_PORT, value: "9100"}
           ports:
             - {containerPort: 8000}
+            - {containerPort: 9100}
           readinessProbe:
             httpGet: {path: /healthz, port: 8000}
             periodSeconds: 5

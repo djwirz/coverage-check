@@ -1,6 +1,6 @@
 # Coverage Check: spec
 
-Status: Accepted (PR #1), updated with slices 1 to 5 · Date: 2026-11-26 · Owner: Dan
+Status: Accepted (PR #1), updated with slices 1 to 6a · Date: 2026-11-26 · Owner: Dan
 
 ## 1. Problem
 
@@ -76,7 +76,7 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
                          ▼
                        mock-payer (Deployment, FastAPI)
                          seeded synthetic members · failure profile from a ConfigMap · request log
- Prometheus · Grafana · OpenTelemetry collector (in cluster)
+ metrics (reads Postgres) · Prometheus · Grafana · OpenTelemetry collector · Jaeger (in cluster)
 ```
 
 ### Components
@@ -130,8 +130,10 @@ The invariants (checked by the tests and by the invariant report after every cha
 | Scaled from 2 to 10 workers | Throughput stays at the limit. The rate does not go up (invariant 1). |
 
 ## 7. Observability
+Who counts what, and where traces are kept: ADR 0013. What each alert means: [runbook.md](runbook.md).
+
 - **Logs:** structured JSON with batch, check and attempt ids, worker pod name, outcome and timing. No member details above debug level, even though the data is synthetic.
-- **Metrics (Prometheus):**
+- **Metrics (Prometheus):** read from the database by one `metrics` process, and from the mock payer for what it received.
   - Queue depth by state.
   - In-flight payer calls against the cap.
   - Payer requests per second against the limit.
@@ -140,13 +142,14 @@ The invariants (checked by the tests and by the invariant report after every cha
   - Lease expiries.
   - Late replies.
   - Time from submit to final state.
-- **Traces (OpenTelemetry):** one trace per check, from submit through each claim and payer attempt. The trace screenshot is an acceptance criterion.
+- **Traces (OpenTelemetry):** one trace per check, from submit through each claim and payer attempt, kept in Jaeger. The trace screenshot is an acceptance criterion. An attempt whose worker was killed leaves no span.
 - **Dashboard (Grafana):** the rate against the limit line, queue depth, outcomes and lease expiries. It's the backdrop for the GIF.
 - **Alerts:**
   - Payer rate within a small margin of the limit for a sustained period, an early warning.
   - Any one-second window over the limit, which means invariant 1 is broken.
   - Exceptions rising fast.
   - Leased checks older than several lease lengths.
+  - The numbers themselves missing, because without them every other alert is silent.
   - The budget alarm, if there is a cloud deploy.
 
 ## 8. Security
@@ -175,6 +178,8 @@ The invariants (checked by the tests and by the invariant report after every cha
   - Submit a batch and wait for it to finish.
   - Check the FHIR results validate.
   - Run the invariant report.
+  - Check that Prometheus scraped it, every dashboard query has data, and Jaeger holds a retried check's trace.
+  - Fire every alert once, on purpose.
 - **Chaos (local by hand; a short version in CI):**
   - Delete worker pods mid-batch.
   - Scale workers up and down.
@@ -183,7 +188,7 @@ The invariants (checked by the tests and by the invariant report after every cha
   - Try to evict both API pods.
   - The invariant report must pass, and the run must show the disruption really happened.
 - **Full chaos run** (3,000 checks, three times): its own workflow, on demand and when the cluster files change.
-- **CI on every PR:** ruff, mypy, unit, integration, contract, official FHIR validation, image builds, kind end to end with the short chaos run, and gitleaks.
+- **CI on every PR:** ruff, mypy, unit, integration, contract, alert-rule tests, official FHIR validation, image builds, kind end to end with the short chaos run, and gitleaks.
 
 ### Local development
 `docker compose up` runs Postgres and the mock payer for slices 1 to 3. `uv run` runs the API (uvicorn) and the workers on the laptop, and `uv run coverage-check ...` is the CLI. From slice 4, `make up` runs everything on kind.

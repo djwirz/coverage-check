@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End to end on the running cluster: submit, wait, check the invariants, and validate the
-# stored FHIR results. E2E_COUNT sets the batch size; E2E_FHIR=0 skips the validator.
+# stored FHIR results, and that
+# Prometheus and Jaeger saw it happen. E2E_COUNT sets the batch size; E2E_FHIR=0 skips the validator.
 source "$(dirname "$0")/env.sh"
 require_our_cluster
 cd "$ROOT"
@@ -22,3 +23,6 @@ if [ "${E2E_FHIR:-1}" = 1 ]; then
   [ "$stored" = "$count" ] || { echo "Expected $count results, got $stored" >&2; exit 1; }
   scripts/validate_fhir.sh "$results"
 fi
+
+# Last, so the batch is in the numbers and the traces it looks for.
+scripts/k8s/observed.sh
