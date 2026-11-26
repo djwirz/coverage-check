@@ -39,6 +39,7 @@ class Claim:
     attempts: int  # in this cycle, counting this one
     malformed_before: int
     granted_at: float  # time.monotonic() when the token was taken
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class Exhausted:
     """A check was out of attempts, and became an exception without another call."""
 
     check_id: UUID
+    traceparent: str | None = None
 
 
 async def reap(conn: AsyncConnection[Any]) -> int:
@@ -96,7 +98,7 @@ async def claim(
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT id, batch_id, cycle, member_id, given, family, birth_date, payer,"
-                " service_date FROM checks WHERE state = 'queued' AND not_before <= %s"
+                " service_date, traceparent FROM checks WHERE state = 'queued' AND not_before <= %s"
                 " ORDER BY not_before LIMIT 1 FOR UPDATE SKIP LOCKED",
                 (bucket.now,),
             )
@@ -120,7 +122,7 @@ async def claim(
 
         if past["used"] >= settings.max_attempts:
             await _give_up(conn, check["id"], request, "payer_unavailable", bucket.now)
-            return Exhausted(check["id"])
+            return Exhausted(check["id"], check["traceparent"])
 
         attempt_id, lease_id = uuid4(), uuid4()
         await conn.execute(
@@ -157,6 +159,7 @@ async def claim(
         attempts=past["used"] + 1,
         malformed_before=past["malformed"],
         granted_at=granted_at,
+        traceparent=check["traceparent"],
     )
 
 

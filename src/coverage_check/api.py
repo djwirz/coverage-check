@@ -13,7 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from psycopg import AsyncConnection
 from psycopg_pool import AsyncConnectionPool
 
-from coverage_check import batches, problems
+from coverage_check import batches, problems, tracing
 from coverage_check.config import Settings, settings_from_env
 from coverage_check.models import Batch, BatchRequest, Check, Exceptions
 
@@ -61,7 +61,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ) as pool:
             await pool.wait()
             app.state.pool = pool
-            yield
+            tracing.configure("api")
+            try:
+                yield
+            finally:
+                tracing.shutdown()
 
     # No docs pages: they would be the only routes without a token.
     app = FastAPI(
