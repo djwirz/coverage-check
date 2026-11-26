@@ -1,0 +1,7 @@
+# Only what the Dockerfile copies. Everything else, .env included, stays out of the build.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src
+**/__pycache__

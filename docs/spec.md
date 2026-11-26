@@ -1,6 +1,6 @@
 # Coverage Check: spec
 
-Status: Accepted (PR #1), updated with slice 1 · Date: 2026-11-26 · Owner: Dan
+Status: Accepted (PR #1), updated with slices 1 and 2 · Date: 2026-11-26 · Owner: Dan
 
 ## 1. Problem
 
@@ -32,7 +32,7 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
 
 ## 2. Non-goals (v1)
 
-- **Real payers, clearinghouses or X12.** The mock payer speaks a simplified JSON protocol shaped by public eligibility concepts (§13 Q5).
+- **Real payers, clearinghouses or X12.** The mock payer speaks a simplified JSON protocol shaped by public eligibility concepts (ADR 0009).
 - **Real data.** Synthetic members and coverage only.
 - **Claims, prior authorization or benefit calculation.** The answer is: is coverage active, under which plan, and a few plain benefit fields the mock returns.
 - **Accounts and multi-tenancy.** One API token.
@@ -85,7 +85,7 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
 - **Limiter.** One shared token bucket (requests per second) and one in-flight cap (concurrent payer calls), both kept in Postgres and taken in a short transaction. They belong to the payer API being called (one account, one bucket), not to the insurer named on a check. Neither depends on how many workers are running. A worker that can't get a token waits. It never calls anyway (ADR 0005).
 - **Worker.** An asyncio process running a small pool of tasks, capped well below the global in-flight cap. Each task: take a token and an in-flight slot, call the payer with the attempt id as its idempotency key, classify the outcome, write the result or schedule a retry. On SIGTERM it stops claiming, finishes or releases what it holds within the grace period, and exits.
 - **Retry policy.** Retry 429s (honoring `Retry-After`), 5xx errors, timeouts and connection errors, with exponential backoff and full jitter, up to an attempt cap. "Member not found", "invalid request" and malformed replies that repeat go to `exception` with a reason. A retry happens by setting the check's `not_before` time. Workers never sleep on it.
-- **Mock payer.** A separate FastAPI service that knows the synthetic members from `synthetic-cohort` (ADR 0008). Their `missing` and `ambiguous` states are only labels there, so the mock makes them happen: no such member, or more than one match. Its failure profile comes from a ConfigMap: how often each failure happens, a latency distribution, its own rate limit, and late replies. It honors idempotency keys, so a repeated attempt id returns the first answer. It keeps its own request log, which is the evidence for invariant 1 (ADR 0006).
+- **Mock payer.** A separate FastAPI service that knows the synthetic members from `synthetic-cohort` (ADR 0008). Their `missing` and `ambiguous` states are only labels there, so the mock makes them happen: no such member, or more than one match. Its failure profile is a file, from a ConfigMap in the cluster: how often each failure happens, a latency range, its own rate limit and in-flight cap, and late replies (docs/mock-payer.md). It honors idempotency keys, so a repeated attempt id returns the first answer. It keeps its own request log in SQLite, which is the evidence for invariant 1 (ADRs 0006 and 0009). A request counts as in flight there until the payer has finished with it, even if the caller gave up.
 - **FHIR mapping.** A payer reply becomes a `CoverageEligibilityResponse`: outcome, whether coverage is in force, the insurer and plan, the service date, and the benefit items the mock returns. It references a contained `Coverage` and `Patient`. Results are validated in CI against the FHIR R4 profiles.
 - **Kubernetes.** Images built locally and loaded into kind. Kustomize base plus overlays for `local`, `ci`, and `cloud` if there is one (ADR 0003). Each Deployment has readiness and liveness probes, resource requests and limits, a non-root security context, and config from ConfigMaps and Secrets. Workers get a termination grace period longer than their longest call. A PodDisruptionBudget covers the API.
 
@@ -181,7 +181,7 @@ The invariants (checked by the tests and by the invariant report after every cha
 - **CI on every PR:** ruff, mypy, unit, integration, contract, image builds, kind end to end with the short chaos run, and gitleaks.
 
 ### Local development
-`docker compose up` runs Postgres, and the mock payer from slice 2, for slices 1 to 3. `uv run` runs the API (uvicorn) and the workers on the laptop, and `uv run coverage-check ...` is the CLI. From slice 4, `make up` runs everything on kind.
+`docker compose up` runs Postgres and the mock payer for slices 1 to 3. `uv run` runs the API (uvicorn) and the workers on the laptop, and `uv run coverage-check ...` is the CLI. From slice 4, `make up` runs everything on kind.
 
 ## 10. Acceptance criteria (v1 "done", depth 3)
 1. **One command:** `make up` on a clean machine with Docker, kind and kubectl brings up the whole system and seeds it. `make down` removes it.
@@ -204,6 +204,7 @@ Stretch: autoscaling on queue depth, a cloud deploy, Helm packaging, a read-only
    - The cohort's members, the simplified eligibility protocol (§13 Q5) and the failure profile.
    - Idempotency on attempt ids and the request log.
    - Contract tests.
+   - The Dockerfile (multi-stage, non-root, one image for every service), so Compose can run the mock.
 3. **Workers, correct on the laptop:**
    - Leased claims, the shared limiter and in-flight cap, and the retry policy.
    - The exception queue and requeue.
@@ -212,7 +213,7 @@ Stretch: autoscaling on queue depth, a cloud deploy, Helm packaging, a read-only
    - Integration tests with many workers.
    - The invariant report.
 4. **Onto Kubernetes:**
-   - Dockerfiles (multi-stage, non-root) and the kind cluster config.
+   - The kind cluster config, with the image from slice 2 loaded into it.
    - The Kustomize base and the `local` and `ci` overlays, with probes, resources, ConfigMaps and Secrets.
    - Postgres in the cluster (§13 Q1).
    - `make up` and `make down`, and the kind end-to-end run in CI.
@@ -245,6 +246,6 @@ A companion course: master.dev's "Kubernetes: Production-Grade Container Orchest
 
    Recommendation: decide at slice 6, after checking current prices and free limits, with the budget alarm first. Local-only is an honest outcome if the cost isn't worth it.
 4. **Terraform.** Only if Q3 picks a cloud cluster or VM. Then Terraform provisions it, because a hand-built cluster can't be rebuilt or reviewed. It isn't added otherwise (problem first, CLAUDE.md). Decide with Q3.
-5. **The payer protocol.** A simplified JSON request and reply, loosely shaped by public eligibility concepts (member, payer, service date, active coverage, plan, a few benefit lines)? Or something closer to X12 270/271? Recommendation: simplified JSON. X12 parsing is a project of its own and proves nothing this one needs. Settle before slice 2.
+5. **The payer protocol.** Settled at slice 2: simplified JSON (ADR 0009, docs/mock-payer.md).
 6. **Synthetic members.** Settled at slice 1: they come from `synthetic-cohort`, pinned by tag (ADR 0008).
 7. **Case-study angle.** How much comparison to past professional work is safe? Public patterns only, no employer names. Decide in slice 7.

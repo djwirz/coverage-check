@@ -26,6 +26,27 @@ jobs:
       # Integration tests start their own Postgres with Testcontainers (the runner has Docker).
       - run: uv run pytest
 
+  image:
+    name: Image and mock payer
+    runs-on: ubuntu-latest
+    env:
+      # Compose wants it set to read the file. Postgres isn't started here.
+      POSTGRES_PASSWORD: unused
+      MOCK_PAYER_PROFILE: calm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose up --detach --wait --build mock-payer
+      - name: One eligibility check against the running container
+        run: |
+          docker compose exec -T mock-payer coverage-check seed --count 1 \
+            | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["checks"][0]))' \
+            | curl --fail-with-body --silent --data @- -H "Idempotency-Key: ci-smoke" \
+                http://127.0.0.1:8001/eligibility \
+            | tee reply.json
+          grep -q '"result":"active"' reply.json
+      - if: failure()
+        run: docker compose logs mock-payer
+
   gitleaks:
     name: Secret scan
     runs-on: ubuntu-latest
