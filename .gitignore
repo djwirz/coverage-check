@@ -18,3 +18,5 @@ kubeconfig*
 runs/
 # Sample batches written by `coverage-check seed`.
 batch*.json
+# The FHIR validator jar, its packages and the examples it checks.
+.cache/

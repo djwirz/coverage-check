@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from psycopg import OperationalError
 from starlette.exceptions import HTTPException
 
 MEDIA_TYPE = "application/problem+json"
@@ -35,6 +36,11 @@ def install(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
         return problem(exc.status_code, str(exc.detail), headers=exc.headers)
+
+    @app.exception_handler(OperationalError)
+    async def database_unavailable(_: Request, __: OperationalError) -> JSONResponse:
+        # Includes the pool running out of time. The error's own text is not for callers.
+        return problem(503, "The database is not available. Try again.", {"Retry-After": "5"})
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_: Request, exc: RequestValidationError) -> JSONResponse:

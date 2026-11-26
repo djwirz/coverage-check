@@ -2,7 +2,7 @@
 
 Checks insurance coverage in bulk against a payer API that's slow, rate-limited and often fails. Every worker shares one rate limit, so the payer's limit is never exceeded, and every patient ends in exactly one honest state: covered, not covered, or an exception a person can work through. Results are FHIR R4. It runs on Kubernetes and keeps those promises while its pods are killed and scaled mid-batch.
 
-**Status:** early. Slices 1, 2 and 3a of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. Still to come: requeue, graceful shutdown, Kubernetes and observability.
+**Status:** early. Slices 1 to 3 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It all runs on one machine; still to come are Kubernetes, chaos runs and observability.
 
 On a laptop, 3,000 checks with two workers took about four minutes and passed every line of the invariant report. The pace is set by the limiter (16 a second against the payer's 20), and dips when hanging calls fill the in-flight cap. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/).
 
@@ -50,8 +50,11 @@ Submit it. Sending it again with the same key returns the same batch and creates
 | `GET /batches/{id}` | counts by state and outcome, and each check's id |
 | `GET /checks/{id}` | one check, with its FHIR `CoverageEligibilityResponse` once final |
 | `GET /exceptions` | checks a person has to look at, oldest first |
+| `POST /exceptions/{check id}/requeue` | sends one round again; 409 if it isn't an exception |
 
-Every endpoint needs the bearer token. Errors are RFC 9457 problem details.
+Every endpoint needs the bearer token. Errors are RFC 9457 problem details; 503 means the database is unreachable.
+
+Stop a worker with Ctrl-C or SIGTERM: it finishes the calls it has in flight (up to 40 s), then exits. A killed worker's checks are picked up when their leases expire.
 
 When the batch is done, check the invariants against the database and the payer's own log, using the batch id from the submit reply:
 
@@ -90,3 +93,11 @@ TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock uv run pytest
 ```
 
 Lint and types: `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`.
+
+Check the FHIR results with HL7's official validator (needs Java or Docker; the first run downloads about 200 MB into `.cache/`):
+
+```bash
+./scripts/validate_fhir.sh
+```
+
+It validates examples made by the real mapping code against R4, and makes sure a broken one is refused. It runs without a terminology server, so codes from outside the R4 packages aren't checked, and it warns about this project's own code systems and the missing narrative.

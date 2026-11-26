@@ -24,6 +24,8 @@ from coverage_check.policy import Failed, GiveUp, Retry, backoff_seconds, classi
 
 log = logging.getLogger("coverage_check.worker")
 DATABASE_RETRY_SECONDS = 2
+# How long to wait for a connection before saying the database is unavailable.
+DATABASE_WAIT_SECONDS = 5
 
 Pool = AsyncConnectionPool[psycopg.AsyncConnection[Any]]
 
@@ -46,7 +48,21 @@ async def handle(
         return
 
     started = time.monotonic()
-    seen = await payer.ask(claimed.request, claimed.key)
+    try:
+        seen = await payer.ask(claimed.request, claimed.key)
+    except asyncio.CancelledError:
+        # Out of grace. Hand the check back now and don't make it wait for its lease. The
+        # payer may have the request, so the slot stays; the same key makes asking again safe.
+        async with pool.connection() as conn:
+            await queue.finish(
+                conn,
+                claimed,
+                Retry("released"),
+                attempt_class=queue.RELEASED,
+                release_slot=False,
+            )
+        log.warning("released", extra=ids)
+        raise
     decision = classify(seen, claimed.malformed_before)
     attempt_class = decision.reason if isinstance(decision, Retry | GiveUp) else "answered"
     if attempt_class == "malformed_response":
@@ -122,18 +138,40 @@ async def _loop(
 
 
 async def run(settings: WorkerSettings, stop: asyncio.Event) -> None:
-    """Work until `stop` is set. Each task finishes the attempt it is on first."""
+    """Work until `stop` is set, then finish what is in flight, within the grace period."""
     payer = PayerClient(settings.payer_url, settings.attempt_timeout_seconds)
     try:
         async with AsyncConnectionPool(
-            settings.database_url, min_size=1, max_size=settings.concurrency, open=False
+            settings.database_url,
+            min_size=1,
+            max_size=settings.concurrency,
+            open=False,
+            timeout=DATABASE_WAIT_SECONDS,
+            check=AsyncConnectionPool.check_connection,
         ) as pool:
-            await pool.wait()
+            await pool.wait(timeout=30)
             async with pool.connection() as conn:
                 await limiter.configure(conn, settings)
             log.info("worker_started", extra={"concurrency": settings.concurrency})
-            async with asyncio.TaskGroup() as tasks:
-                for _ in range(settings.concurrency):
-                    tasks.create_task(_loop(pool, payer, settings, stop))
+            tasks = [
+                asyncio.create_task(_loop(pool, payer, settings, stop))
+                for _ in range(settings.concurrency)
+            ]
+            try:
+                await stop.wait()
+                log.info("worker_stopping")
+                _, late = await asyncio.wait(tasks, timeout=settings.shutdown_grace_seconds)
+                for task in late:
+                    task.cancel()
+            except asyncio.CancelledError:
+                for task in tasks:
+                    task.cancel()
+                raise
+            finally:
+                # Let cancelled tasks hand their checks back while the pool is still open.
+                for outcome in await asyncio.gather(*tasks, return_exceptions=True):
+                    if isinstance(outcome, Exception):
+                        log.error("task_failed", extra={"error": type(outcome).__name__})
+            log.info("worker_stopped")
     finally:
         await payer.close()

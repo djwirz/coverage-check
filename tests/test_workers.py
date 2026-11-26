@@ -19,7 +19,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from coverage_check import limiter, queue, report, worker
-from coverage_check.batches import submit_batch
+from coverage_check.batches import requeue, submit_batch
 from coverage_check.config import WorkerSettings
 from coverage_check.fhir import CoverageEligibilityResponse
 from coverage_check.mock_payer.profile import Profile
@@ -447,3 +447,33 @@ def test_the_report_fails_when_the_limit_was_broken(database_url: str, payer_db:
         findings = passed(config, batch_id)
     assert findings[1] is False
     assert findings[2] is True
+
+
+def test_a_requeued_exception_is_asked_afresh(
+    database_url: str, payer_db: Path, rows: psycopg.Connection[dict[str, Any]]
+) -> None:
+    batch_id = submit(database_url, 1)
+    with serving(payer_profile(server_error_rate=1), payer_db) as url:
+        work(settings(database_url, url, max_attempts=2))
+    check = rows.execute("SELECT id, state FROM checks").fetchone()
+    assert check is not None
+    assert check["state"] == "exception"
+
+    async def requeue_it() -> None:
+        async with await psycopg.AsyncConnection.connect(database_url) as conn:
+            assert await requeue(conn, check["id"]) is not None
+
+    asyncio.run(requeue_it())
+    # The payer is better now.
+    with serving(payer_profile(), payer_db) as url:
+        config = settings(database_url, url, max_attempts=2)
+        work(config)
+        assert passed(config, batch_id) == {n: True for n in range(1, 7)}
+        log = payer_requests(url)
+    assert rows.execute("SELECT state, outcome FROM checks").fetchone() == {
+        "state": "done",
+        "outcome": "covered",
+    }
+    assert [e["idempotency_key"] for e in log] == [f"{check['id']}:{c}" for c in (0, 0, 1)]
+    assert [e["billable"] for e in log] == [False, False, True]
+    assert rows.execute("SELECT count(*) AS n FROM attempts").fetchone() == {"n": 3}

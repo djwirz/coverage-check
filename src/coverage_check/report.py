@@ -14,7 +14,7 @@ from psycopg.rows import dict_row
 from pydantic import ValidationError
 
 from coverage_check.fhir import CoverageEligibilityResponse
-from coverage_check.queue import NOT_SENT
+from coverage_check.queue import UNCOUNTED
 
 # Requests the payer turned away at the door were never being worked on.
 REFUSED = {"rate_limit", "in_flight_limit"}
@@ -82,9 +82,9 @@ def build(database_url: str, payer_url: str, batch_id: UUID, max_attempts: int) 
         attempts = conn.execute(
             "SELECT a.check_id, a.cycle, count(*) AS n FROM attempts a"
             " JOIN checks c ON c.id = a.check_id"
-            " WHERE c.batch_id = %s AND a.outcome_class IS DISTINCT FROM %s"
+            " WHERE c.batch_id = %s AND NOT coalesce(a.outcome_class = ANY(%s), false)"
             " GROUP BY a.check_id, a.cycle",
-            (batch_id, NOT_SENT),
+            (batch_id, UNCOUNTED),
         ).fetchall()
     with httpx2.Client(base_url=payer_url, timeout=30) as client:
         limits = client.get("/limits").json()
