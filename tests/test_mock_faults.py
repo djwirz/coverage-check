@@ -155,3 +155,27 @@ def test_a_key_still_being_handled_is_a_conflict_even_once_billed(db: Path) -> N
         during = client.post("/eligibility", json=member_body(), headers=HEADERS)
         assert during.status_code == 409
         assert during.json() == {"error": "in_progress"}
+
+
+def test_the_profile_can_be_changed_and_restored_while_running(db: Path) -> None:
+    with TestClient(create_app(profile(), db)) as client:
+
+        def ask(key: str) -> int:
+            headers = {"Idempotency-Key": key}
+            return client.post("/eligibility", json=member_body(), headers=headers).status_code
+
+        assert ask("a") == 200
+        assert client.patch("/profile", json={"server_error_rate": 1}).status_code == 200
+        assert ask("b") in (500, 502, 503)
+        assert client.delete("/profile").status_code == 200
+        assert ask("c") == 200
+        # The log and the answers are the same ones throughout.
+        assert len(client.get("/requests").json()["requests"]) == 3
+
+
+@pytest.mark.parametrize("changes", [{"thottle_rate": 1}, {"server_error_rate": 2}])
+def test_a_bad_change_is_refused_and_changes_nothing(db: Path, changes: dict[str, float]) -> None:
+    with TestClient(create_app(profile(), db)) as client:
+        assert client.patch("/profile", json=changes).status_code == 422
+        headers = {"Idempotency-Key": "a"}
+        assert client.post("/eligibility", json=member_body(), headers=headers).status_code == 200

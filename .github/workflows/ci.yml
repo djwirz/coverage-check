@@ -80,6 +80,8 @@ jobs:
       - run: uv sync --locked
       - run: make up OVERLAY=ci
       - run: make e2e
+      # A short run: the same disruptions as the full one in chaos.yml, on a smaller batch.
+      - run: make chaos CHAOS_COUNT=1500
       - if: failure()
         run: make debug
       - if: always()

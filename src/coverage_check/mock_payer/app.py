@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from pydantic import ValidationError
 
 from coverage_check.config import require_env
@@ -158,11 +158,26 @@ def create_app(
     ) -> dict[str, list[dict[str, Any]]]:
         return {"requests": store.log(after, limit)}
 
+    # Test control, for the chaos run: change how the payer behaves without restarting it,
+    # which would also reset its rate window. In the cluster only workers can reach it.
+    @app.patch("/profile")
+    async def change_profile(changes: dict[str, Any]) -> Profile:
+        try:
+            payer.profile = Profile.model_validate({**payer.profile.model_dump(), **changes})
+        except ValidationError as error:
+            raise HTTPException(422, [e["msg"] for e in error.errors()]) from None
+        return payer.profile
+
+    @app.delete("/profile")
+    async def restore_profile() -> Profile:
+        payer.profile = profile
+        return payer.profile
+
     @app.get("/limits")
     async def limits() -> dict[str, int]:
         return {
-            "rate_limit_per_second": profile.rate_limit_per_second,
-            "max_in_flight": profile.max_in_flight,
+            "rate_limit_per_second": payer.profile.rate_limit_per_second,
+            "max_in_flight": payer.profile.max_in_flight,
         }
 
     @app.get("/healthz")
