@@ -16,3 +16,5 @@ build/
 # Local kubeconfigs and chaos-run output; summaries worth keeping go in docs/.
 kubeconfig*
 runs/
+# Sample batches written by `coverage-check seed`.
+batch*.json

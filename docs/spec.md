@@ -1,6 +1,6 @@
 # Coverage Check: spec
 
-Status: Draft for PR #1 · Date: 2026-11-23 · Owner: Dan
+Status: Accepted (PR #1), updated with slice 1 · Date: 2026-11-26 · Owner: Dan
 
 ## 1. Problem
 
@@ -20,7 +20,7 @@ Coverage Check is a small service that takes batches of checks, runs them throug
 
 **What a viewer sees.**
 1. One command brings up a local cluster with the API, workers, the mock payer, Postgres and a dashboard.
-2. A batch of a few thousand synthetic patients goes in. The dashboard shows the payer request rate climbing to the limit line and staying under it.
+2. A batch of a few thousand checks about synthetic patients goes in. The dashboard shows the payer request rate climbing to the limit line and staying under it.
 3. Mid-batch, worker pods are deleted and the deployment is scaled up and down. The rate stays under the line, and the leased checks are picked up again.
 4. The batch finishes. The invariant report says it all: every check in one final state, no duplicate payer calls for one attempt, and a peak rate under the limit. The exception queue holds the patients the payer couldn't find, with the reason.
 5. One check's trace, from submit through the worker to each payer attempt and its retry.
@@ -82,10 +82,10 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
 ### Components
 - **API.** FastAPI. `POST /batches` takes a list of checks (member id, name, birth date, payer, service date) and an `Idempotency-Key` header. The same key with the same body returns the original batch; the same key with a different body is a 409. It writes the batch and its checks in one transaction. Reads return status and results. Exceptions can be listed and requeued.
 - **Queue (Postgres).** Checks move through `queued → leased → done | exception`. A worker claims a few at a time with `FOR UPDATE SKIP LOCKED` and sets a lease expiry. A check whose lease expires goes back to `queued`. Each payer call is an `attempt` row with its own id, written before the call is made (ADR 0004).
-- **Limiter.** One shared token bucket (requests per second) and one in-flight cap (concurrent payer calls), both kept in Postgres and taken in a short transaction. Neither depends on how many workers are running. A worker that can't get a token waits. It never calls anyway (ADR 0005).
+- **Limiter.** One shared token bucket (requests per second) and one in-flight cap (concurrent payer calls), both kept in Postgres and taken in a short transaction. They belong to the payer API being called (one account, one bucket), not to the insurer named on a check. Neither depends on how many workers are running. A worker that can't get a token waits. It never calls anyway (ADR 0005).
 - **Worker.** An asyncio process running a small pool of tasks, capped well below the global in-flight cap. Each task: take a token and an in-flight slot, call the payer with the attempt id as its idempotency key, classify the outcome, write the result or schedule a retry. On SIGTERM it stops claiming, finishes or releases what it holds within the grace period, and exits.
 - **Retry policy.** Retry 429s (honoring `Retry-After`), 5xx errors, timeouts and connection errors, with exponential backoff and full jitter, up to an attempt cap. "Member not found", "invalid request" and malformed replies that repeat go to `exception` with a reason. A retry happens by setting the check's `not_before` time. Workers never sleep on it.
-- **Mock payer.** A separate FastAPI service with a seeded set of synthetic members. Its failure profile comes from a ConfigMap: how often each failure happens, a latency distribution, its own rate limit, and late replies. It honors idempotency keys, so a repeated attempt id returns the first answer. It keeps its own request log, which is the evidence for invariant 1 (ADR 0006).
+- **Mock payer.** A separate FastAPI service that knows the synthetic members from `synthetic-cohort` (ADR 0008). Their `missing` and `ambiguous` states are only labels there, so the mock makes them happen: no such member, or more than one match. Its failure profile comes from a ConfigMap: how often each failure happens, a latency distribution, its own rate limit, and late replies. It honors idempotency keys, so a repeated attempt id returns the first answer. It keeps its own request log, which is the evidence for invariant 1 (ADR 0006).
 - **FHIR mapping.** A payer reply becomes a `CoverageEligibilityResponse`: outcome, whether coverage is in force, the insurer and plan, the service date, and the benefit items the mock returns. It references a contained `Coverage` and `Patient`. Results are validated in CI against the FHIR R4 profiles.
 - **Kubernetes.** Images built locally and loaded into kind. Kustomize base plus overlays for `local`, `ci`, and `cloud` if there is one (ADR 0003). Each Deployment has readiness and liveness probes, resource requests and limits, a non-root security context, and config from ConfigMaps and Secrets. Workers get a termination grace period longer than their longest call. A PodDisruptionBudget covers the API.
 
@@ -95,7 +95,7 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
   - `submit <file>` sends a batch.
   - `status <batch>` shows its progress.
   - `exceptions [--requeue <id>]` lists or requeues exceptions.
-  - `seed` generates the synthetic members and a sample batch.
+  - `seed` writes a sample batch from the synthetic members (ADR 0008), with the cohort's reference date as the service date. The expected answer (`coverage_state`) is never in a request.
   - `report <batch>` prints the invariant report from the database and the mock payer's log.
 - **Cluster:**
   - `make up` creates the kind cluster, builds and loads images, applies the local overlay, waits for readiness and seeds.
@@ -181,7 +181,7 @@ The invariants (checked by the tests and by the invariant report after every cha
 - **CI on every PR:** ruff, mypy, unit, integration, contract, image builds, kind end to end with the short chaos run, and gitleaks.
 
 ### Local development
-`docker compose up` runs Postgres and the mock payer for slices 1 to 3. `uv run coverage-check ...` runs the API and workers on the laptop. From slice 4, `make up` runs everything on kind.
+`docker compose up` runs Postgres, and the mock payer from slice 2, for slices 1 to 3. `uv run` runs the API (uvicorn) and the workers on the laptop, and `uv run coverage-check ...` is the CLI. From slice 4, `make up` runs everything on kind.
 
 ## 10. Acceptance criteria (v1 "done", depth 3)
 1. **One command:** `make up` on a clean machine with Docker, kind and kubectl brings up the whole system and seeds it. `make down` removes it.
@@ -199,9 +199,9 @@ Stretch: autoscaling on queue depth, a cloud deploy, Helm packaging, a read-only
    - The uv project with ruff, mypy, pytest, and CI with gitleaks.
    - Docker Compose for Postgres, plus the Alembic schema (batches, checks, attempts, limiter).
    - The API's `POST /batches` with idempotency, and the read endpoints.
-   - Synthetic member generation (§13 Q6).
+   - Synthetic members from `synthetic-cohort` and `seed` (ADR 0008).
 2. **The mock payer:**
-   - Seeded members, the simplified eligibility protocol (§13 Q5) and the failure profile.
+   - The cohort's members, the simplified eligibility protocol (§13 Q5) and the failure profile.
    - Idempotency on attempt ids and the request log.
    - Contract tests.
 3. **Workers, correct on the laptop:**
@@ -232,7 +232,7 @@ A companion course: master.dev's "Kubernetes: Production-Grade Container Orchest
 | | Slices 1–3 | Slices 4–5 | Slice 6+ |
 |---|---|---|---|
 | Laptop | Compose: Postgres and the mock payer; API and workers with uv | kind: everything | kind: everything plus observability |
-| CI | Postgres service container | kind cluster in the job | the same, plus the deploy from `main` if there is one |
+| CI | Testcontainers Postgres | kind cluster in the job | the same, plus the deploy from `main` if there is one |
 | Cloud | none | none | per §13 Q3 |
 
 ## 13. Open questions (settle before slice 1 unless noted)
@@ -246,5 +246,5 @@ A companion course: master.dev's "Kubernetes: Production-Grade Container Orchest
    Recommendation: decide at slice 6, after checking current prices and free limits, with the budget alarm first. Local-only is an honest outcome if the cost isn't worth it.
 4. **Terraform.** Only if Q3 picks a cloud cluster or VM. Then Terraform provisions it, because a hand-built cluster can't be rebuilt or reviewed. It isn't added otherwise (problem first, CLAUDE.md). Decide with Q3.
 5. **The payer protocol.** A simplified JSON request and reply, loosely shaped by public eligibility concepts (member, payer, service date, active coverage, plan, a few benefit lines)? Or something closer to X12 270/271? Recommendation: simplified JSON. X12 parsing is a project of its own and proves nothing this one needs. Settle before slice 2.
-6. **Synthetic members.** Generate them with Synthea, as FHIR over MCP does, or with a small seeded generator in the repo? Recommendation: a small seeded generator, unless it turns out Synthea's output already includes usable payer and coverage data. Check that at slice 1. Members only need a name, birth date, member id, payer and a coverage state. Some members are deliberately missing, ambiguous or inactive, so every outcome happens.
+6. **Synthetic members.** Settled at slice 1: they come from `synthetic-cohort`, pinned by tag (ADR 0008).
 7. **Case-study angle.** How much comparison to past professional work is safe? Public patterns only, no employer names. Decide in slice 7.
