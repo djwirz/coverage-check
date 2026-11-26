@@ -96,8 +96,18 @@ say "killing every worker in the middle of its calls"
 payer PATCH "{$CALM,\"latency_min_seconds\":20,\"latency_max_seconds\":20}"
 submit 100 stuck
 sleep 5
+# Kill first, then scale. Scaling first asks the workers to stop, and they finish their calls
+# before they go. The replacements are removed before they have started.
+k delete pods -l app.kubernetes.io/name=worker --grace-period=0 --force
 k scale deployment/worker --replicas=0
-k delete pods -l app.kubernetes.io/name=worker --grace-period=0 --force --ignore-not-found
+k wait --for=delete pod -l app.kubernetes.io/name=worker --timeout=120s
+# Without a lease left behind there is nothing to alert on: say so now, not in five minutes.
+sleep 10
+left=$(k exec deployment/prometheus -- wget -qO- \
+  'http://127.0.0.1:9090/api/v1/query?query=coverage_check_checks{state="leased"}' |
+  python3 -c 'import json, sys; print(int(float(json.load(sys.stdin)["data"]["result"][0]["value"][1])))')
+[ "$left" -gt 0 ] || { echo "The killed workers left no lease behind" >&2; exit 1; }
+say "$left checks left leased with no worker"
 fires LeaseStuck 300
 restore
 finish

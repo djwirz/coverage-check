@@ -125,4 +125,4 @@ Takes about ten minutes. It changes no manifest: the mock payer's test controls 
 | PayerRateNearLimit | a payer with no faults and a limit of 17, with a batch of 3,000 |
 | PayerOverLimit | the payer's limit lowered to 8 during that batch |
 | ExceptionsRising | a payer that fails every request, with a batch of 150 |
-| LeaseStuck | every worker force-deleted during slow calls, and left at 0 |
+| LeaseStuck | every worker force-deleted during slow calls, then scaled to 0 |
