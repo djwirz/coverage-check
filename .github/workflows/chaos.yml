@@ -1,0 +1,39 @@
+name: Chaos
+
+# The full-size run, three times over, for the throughput figures and their spread (spec §10).
+# Every PR runs a short one in CI; this runs on demand and when what it exercises changes.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/chaos.yml
+      - scripts/k8s/**
+      - deploy/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full:
+    name: Full run ${{ matrix.run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make up
+      - name: An undisturbed batch of 3,000, for the pace
+        run: make e2e E2E_COUNT=3000 E2E_FHIR=0
+      - name: The same under chaos
+        run: make chaos CHAOS_COUNT=3000
+      - if: failure()
+        run: make debug
+      - if: always()
+        run: make down

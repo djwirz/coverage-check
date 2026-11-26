@@ -6,6 +6,8 @@ require_our_cluster
 cd "$ROOT"
 count=${E2E_COUNT:-200}
 
+"$ROOT/scripts/k8s/netpol.sh"
+
 batch=$(k exec -i deployment/api -- python - "$count" "e2e-$(date +%s)" 600 <scripts/k8s/submit.py)
 echo "Batch $batch is done."
 k exec deployment/worker -- coverage-check report "$batch"

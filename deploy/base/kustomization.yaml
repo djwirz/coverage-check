@@ -8,6 +8,8 @@ resources:
   - mock-payer.yaml
   - api.yaml
   - worker.yaml
+  - api-pdb.yaml
+  - network-policies.yaml
 # Generated names carry a hash of the content, so a change rolls the pods that use it.
 configMapGenerator:
   - name: worker-config

@@ -30,6 +30,7 @@ def call(path: str, data: bytes | None = None, headers: dict[str, str] | None = 
 
 
 def main(count: int, key: str, wait_seconds: float = 0) -> None:
+    started = time.monotonic()
     batch = call(
         "/batches",
         sample_batch(count).model_dump_json().encode(),
@@ -43,6 +44,9 @@ def main(count: int, key: str, wait_seconds: float = 0) -> None:
         batch = call(f"/batches/{batch['id']}")
     if batch["done"]:
         print(batch["states"], batch["outcomes"], file=sys.stderr)
+        if wait_seconds:
+            took = time.monotonic() - started
+            print(f"{count} checks finished in {took:.0f} s", file=sys.stderr)
     print(batch["id"])
 
 

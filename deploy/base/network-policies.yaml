@@ -1,0 +1,41 @@
+# Pods accept no connections unless a policy below allows them (spec §8).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# Only what holds or changes data may reach the database.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-from-api-worker-migrate
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: postgres}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [api, worker, migrate]}
+      ports:
+        - {port: 5432}
+---
+# Only workers may call the payer, so nothing can get round the shared limiter.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mock-payer-from-worker
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: mock-payer}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: worker}
+      ports:
+        - {port: 8000}

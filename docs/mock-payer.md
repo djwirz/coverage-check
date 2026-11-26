@@ -68,6 +68,10 @@ A TOML file, named by `MOCK_PAYER_PROFILE`: [`default.toml`](../deploy/base/mock
 
 Faults are repeatable: each is drawn from a hash of the seed, the request body and how many times that body has been seen. The same run gets the same faults in any order and with any attempt ids. Which requests hit the rate or in-flight limit does depend on timing.
 
+## Changing it while it runs
+
+`PATCH /profile` with any of the settings changes them from the next request, and `DELETE /profile` goes back to the file's. The log, the stored answers and the limit counters carry on. This is test control for the chaos run; in the cluster only workers can reach the payer.
+
 ## Request log
 
 `GET /requests?after=<id>&limit=<n>` returns every eligibility request received: key, body hash, `received_at` and `replied_at` (seconds since 1970), status, behaviour, whether it was a replay, whether it was billable. No member details. `behaviour` is `ok` or the fault's name (`throttle`, `server_error`, `malformed`, `slow`, `timeout`, `late`), or `replay`, `rate_limit`, `in_flight_limit`, `invalid_request`, `in_progress`, `key_reused`, or `aborted` if the payer stopped while handling it. A row with no `replied_at` was never answered. It is kept in SQLite (`MOCK_PAYER_DB`) and survives a restart; deleting that file starts a new run. `GET /healthz` is not limited or logged.

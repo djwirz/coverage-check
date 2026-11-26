@@ -1,6 +1,6 @@
 # Coverage Check: spec
 
-Status: Accepted (PR #1), updated with slices 1 to 4 · Date: 2026-11-26 · Owner: Dan
+Status: Accepted (PR #1), updated with slices 1 to 5 · Date: 2026-11-26 · Owner: Dan
 
 ## 1. Problem
 
@@ -87,7 +87,7 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
 - **Retry policy.** Retry 429s (honoring `Retry-After`), 409 "still in progress", 5xx errors, timeouts and connection errors, with exponential backoff and full jitter, up to an attempt cap. "Member not found", "invalid request" and malformed replies that repeat go to `exception` with a reason. A retry happens by setting the check's `not_before` time. Workers never sleep on it.
 - **Mock payer.** A separate FastAPI service that knows the synthetic members from `synthetic-cohort` (ADR 0008). Their `missing` and `ambiguous` states are only labels there, so the mock makes them happen: no such member, or more than one match. Its failure profile is a file, from a ConfigMap in the cluster: how often each failure happens, a latency range, its own rate limit and in-flight cap, and late replies (docs/mock-payer.md). It honors idempotency keys, so a repeated key returns the first answer. It keeps its own request log in SQLite, which is the evidence for invariant 1 (ADRs 0006 and 0009). A request counts as in flight there until the payer has finished with it, even if the caller gave up.
 - **FHIR mapping.** A payer reply becomes a `CoverageEligibilityResponse`: outcome, whether coverage is in force, the insurer and plan, the service date, and the benefit items the mock returns. It references a contained `Coverage` and `Patient`. An exception gets one too, with outcome `error` and the reason. CI validates examples from this mapping with HL7's official validator for R4. It runs with no terminology server, so codes from outside the R4 packages are not checked there.
-- **Kubernetes.** Images built locally and loaded into kind. Kustomize base plus overlays for `local`, `ci`, and `cloud` if there is one (ADR 0003). Each Deployment has readiness and liveness probes (workers serve no HTTP, so theirs look at files the worker touches), resource requests and limits, a non-root security context, and config from ConfigMaps and Secrets. Workers get a termination grace period longer than their longest call. A PodDisruptionBudget covers the API.
+- **Kubernetes.** Images built locally and loaded into kind. Kustomize base plus overlays for `local`, `ci`, and `cloud` if there is one (ADR 0003). Each Deployment has readiness and liveness probes (workers serve no HTTP, so theirs look at files the worker touches), resource requests and limits, a non-root security context, and config from ConfigMaps and Secrets. Workers get a termination grace period longer than their longest call. A PodDisruptionBudget covers the API (against evictions; it does not limit `kubectl delete`).
 
 ## 5. Interfaces
 - **HTTP API:** the endpoints in §4. Bearer token. Errors as RFC 9457 problem details.
@@ -153,7 +153,7 @@ The invariants (checked by the tests and by the invariant report after every cha
 - The API token and database credentials are in Kubernetes Secrets, created by `make up` from a git-ignored `.env`. They never appear in manifests, logs or PR text.
 - Inputs are validated with pydantic: ids, dates, batch size caps.
 - Containers run as non-root with read-only root filesystems where possible, and no privilege escalation.
-- A NetworkPolicy lets only workers reach the mock payer, and only the API and workers reach Postgres. This needs a CNI that enforces it (§13 Q1).
+- NetworkPolicies refuse all incoming connections by default, then let only workers reach the mock payer, and only the API, workers and the migration job reach Postgres. `make e2e` proves they are enforced (ADR 0011).
 - gitleaks in CI. `.env.example` holds placeholders only.
 
 ## 9. Testing and CI
@@ -180,7 +180,9 @@ The invariants (checked by the tests and by the invariant report after every cha
   - Scale workers up and down.
   - Restart Postgres.
   - Raise the payer's failure rate.
-  - The invariant report must pass.
+  - Try to evict both API pods.
+  - The invariant report must pass, and the run must show the disruption really happened.
+- **Full chaos run** (3,000 checks, three times): its own workflow, on demand and when the cluster files change.
 - **CI on every PR:** ruff, mypy, unit, integration, contract, official FHIR validation, image builds, kind end to end with the short chaos run, and gitleaks.
 
 ### Local development
@@ -236,8 +238,8 @@ A companion course: master.dev's "Kubernetes: Production-Grade Container Orchest
 | Cloud | none | none | per §13 Q3 |
 
 ## 13. Open questions (settle before slice 1 unless noted)
-1. **Postgres in the cluster, and the CNI.** Settled at slice 4: a plain StatefulSet and kind's default networking (ADR 0011). Slice 5 still has to show that it enforces NetworkPolicy.
-2. **Autoscaling.** No autoscaling (scale by hand in the chaos run), an HPA on a custom metric through a Prometheus adapter, or KEDA scaling on Postgres queue depth? Recommendation: KEDA on queue depth if it installs cleanly on kind. CPU is the wrong signal for workers that mostly wait on the payer. Either way, the limiter is what keeps the rate safe, not the replica count. Check current KEDA docs and its Postgres scaler at slice 5.
+1. **Postgres in the cluster, and the CNI.** Settled at slice 4: a plain StatefulSet and kind's default networking (ADR 0011). Slice 5 showed that it enforces NetworkPolicy.
+2. **Autoscaling.** Settled at slice 5: none, workers are scaled by hand (ADR 0012).
 3. **A public deploy, and where.** A managed cluster isn't free (build-plan `research/free-tiers-2026-11-18.md`). Options:
    - k3s on an always-free VM.
    - A small managed cluster brought up only for demo windows and then torn down.
