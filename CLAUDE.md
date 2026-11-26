@@ -3,7 +3,7 @@
 A service that checks insurance coverage in bulk against a rate-limited, unreliable payer API. Workers share one rate limit and one concurrency cap, so the payer's limit is never exceeded, and every check ends in exactly one final state, as FHIR R4. It runs on Kubernetes (kind) and keeps those promises when pods are killed and scaled mid-batch. Use they/them for Dan.
 
 ## Status
-Slices 1, 2 and 3a (spec §11) are built: the project and CI, the schema, the batch API, members from `synthetic-cohort` (ADR 0008), the mock payer with its image (ADR 0009, `docs/mock-payer.md`), and workers with the shared limiter, retries, FHIR results and the invariant report (ADR 0010). Next is slice 3b: requeue, graceful shutdown, the FHIR validator in CI and crash tests. `docs/spec.md` and the ADRs were accepted in PR #1. Open questions are in spec §13; each is settled by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
+Slices 1 to 3 (spec §11) are built: the project and CI, the schema, the batch API, members from `synthetic-cohort` (ADR 0008), the mock payer with its image (ADR 0009, `docs/mock-payer.md`), workers with the shared limiter, retries, FHIR results and the invariant report (ADR 0010), requeue, graceful shutdown, official FHIR validation in CI and crash tests. Next is slice 4, onto Kubernetes: settle spec §13 Q1 first, and the image still lacks the Alembic files. `docs/spec.md` and the ADRs were accepted in PR #1. Open questions are in spec §13; each is settled by the slice it names. The judgment behind the project is in `docs/artifact-spec.md`.
 
 ## How we work
 - Pull requests only. Never push to `main`. Merged PRs are the project's record.

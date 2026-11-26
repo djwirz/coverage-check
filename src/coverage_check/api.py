@@ -18,6 +18,7 @@ from coverage_check.config import Settings, settings_from_env
 from coverage_check.models import Batch, BatchRequest, Check, Exceptions
 
 bearer = HTTPBearer(auto_error=False)
+DATABASE_WAIT_SECONDS = 5
 
 
 def require_token(
@@ -50,7 +51,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        async with AsyncConnectionPool(settings.database_url, open=False) as pool:
+        async with AsyncConnectionPool(
+            settings.database_url,
+            open=False,
+            timeout=DATABASE_WAIT_SECONDS,
+            # Replace connections that a restarted database has dropped.
+            check=AsyncConnectionPool.check_connection,
+        ) as pool:
             await pool.wait()
             app.state.pool = pool
             yield
@@ -106,5 +113,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         conn: Connection, limit: Annotated[int, Query(ge=1, le=1000)] = 100
     ) -> Exceptions:
         return Exceptions(exceptions=await batches.list_exceptions(conn, limit))
+
+    @app.post(
+        "/exceptions/{check_id}/requeue", responses={409: {"description": "Not an exception"}}
+    )
+    async def requeue(check_id: UUID, conn: Connection) -> Check:
+        try:
+            check = await batches.requeue(conn, check_id)
+        except batches.NotAnExceptionError:
+            raise HTTPException(409, "This check is not in the exception queue.") from None
+        if check is None:
+            raise HTTPException(404, "No such check.")
+        return check
 
     return app

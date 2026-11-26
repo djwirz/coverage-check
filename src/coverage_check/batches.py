@@ -23,6 +23,10 @@ class IdempotencyConflictError(Exception):
     """The key was already used for a different batch."""
 
 
+class NotAnExceptionError(Exception):
+    """Only a check in the exception queue can be requeued."""
+
+
 def request_digest(request: BatchRequest) -> bytes:
     """Hash of the validated request, so JSON spacing and key order don't matter."""
     return hashlib.sha256(request.model_dump_json().encode()).digest()
@@ -126,3 +130,21 @@ async def list_exceptions(conn: AsyncConnection[Any], limit: int) -> list[Check]
             (limit,),
         )
         return await cur.fetchall()
+
+
+async def requeue(conn: AsyncConnection[Any], check_id: UUID) -> Check | None:
+    """Send an exception round again, as a new cycle: a new payer key and a new attempt cap.
+
+    One conditional update, so of two requests only one can succeed. Past attempts stay.
+    """
+    async with conn.transaction(), conn.cursor(row_factory=class_row(Check)) as cur:
+        await cur.execute(
+            "UPDATE checks SET state = 'queued', cycle = cycle + 1, exception_reason = NULL,"  # noqa: S608
+            " result = NULL, not_before = clock_timestamp(), updated_at = clock_timestamp()"
+            f" WHERE id = %s AND state = 'exception' RETURNING {_CHECK_COLUMNS}",
+            (check_id,),
+        )
+        requeued = await cur.fetchone()
+    if requeued is None and await get_check(conn, check_id) is not None:
+        raise NotAnExceptionError
+    return requeued

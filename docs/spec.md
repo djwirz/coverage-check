@@ -1,6 +1,6 @@
 # Coverage Check: spec
 
-Status: Accepted (PR #1), updated with slices 1 to 3a · Date: 2026-11-26 · Owner: Dan
+Status: Accepted (PR #1), updated with slices 1 to 3 · Date: 2026-11-26 · Owner: Dan
 
 ## 1. Problem
 
@@ -83,15 +83,15 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
 - **API.** FastAPI. `POST /batches` takes a list of checks (member id, name, birth date, payer, service date) and an `Idempotency-Key` header. The same key with the same body returns the original batch; the same key with a different body is a 409. It writes the batch and its checks in one transaction. Reads return status and results. Exceptions can be listed and requeued.
 - **Queue (Postgres).** Checks move through `queued → leased → done | exception`. A worker claims a few at a time with `FOR UPDATE SKIP LOCKED` and sets a lease expiry. A check whose lease expires goes back to `queued`. Each payer call is an `attempt` row with its own id, written before the call is made (ADR 0004). One transaction takes the capacity, the check and the attempt row together (ADR 0010).
 - **Limiter.** One shared token bucket (requests per second) and one in-flight cap (concurrent payer calls), both kept in Postgres and taken in a short transaction. They belong to the payer API being called (one account, one bucket), not to the insurer named on a check. Neither depends on how many workers are running. A worker that can't get a token waits. It never calls anyway (ADR 0005). `burst + rate` stays under the payer's limit, and a slot is freed only when the payer has replied or never got the request; otherwise it expires (ADR 0010).
-- **Worker.** An asyncio process running a small pool of tasks, capped well below the global in-flight cap. Each task: take a token, an in-flight slot and a check, call the payer with the check's idempotency key (the same on every retry), classify the outcome, write the result or schedule a retry. One timeout, longer than the payer's longest call (ADR 0010). On SIGTERM it stops claiming, finishes or releases what it holds within the grace period, and exits.
+- **Worker.** An asyncio process running a small pool of tasks, capped well below the global in-flight cap. Each task: take a token, an in-flight slot and a check, call the payer with the check's idempotency key (the same on every retry), classify the outcome, write the result or schedule a retry. One timeout, longer than the payer's longest call (ADR 0010). On SIGTERM it stops claiming, finishes what it holds, hands back anything still unfinished when the grace period ends, and exits. The grace period is longer than the attempt timeout.
 - **Retry policy.** Retry 429s (honoring `Retry-After`), 409 "still in progress", 5xx errors, timeouts and connection errors, with exponential backoff and full jitter, up to an attempt cap. "Member not found", "invalid request" and malformed replies that repeat go to `exception` with a reason. A retry happens by setting the check's `not_before` time. Workers never sleep on it.
 - **Mock payer.** A separate FastAPI service that knows the synthetic members from `synthetic-cohort` (ADR 0008). Their `missing` and `ambiguous` states are only labels there, so the mock makes them happen: no such member, or more than one match. Its failure profile is a file, from a ConfigMap in the cluster: how often each failure happens, a latency range, its own rate limit and in-flight cap, and late replies (docs/mock-payer.md). It honors idempotency keys, so a repeated key returns the first answer. It keeps its own request log in SQLite, which is the evidence for invariant 1 (ADRs 0006 and 0009). A request counts as in flight there until the payer has finished with it, even if the caller gave up.
-- **FHIR mapping.** A payer reply becomes a `CoverageEligibilityResponse`: outcome, whether coverage is in force, the insurer and plan, the service date, and the benefit items the mock returns. It references a contained `Coverage` and `Patient`. An exception gets one too, with outcome `error` and the reason. Results are validated in CI against the FHIR R4 profiles.
+- **FHIR mapping.** A payer reply becomes a `CoverageEligibilityResponse`: outcome, whether coverage is in force, the insurer and plan, the service date, and the benefit items the mock returns. It references a contained `Coverage` and `Patient`. An exception gets one too, with outcome `error` and the reason. CI validates examples from this mapping with HL7's official validator for R4. It runs with no terminology server, so codes from outside the R4 packages are not checked there.
 - **Kubernetes.** Images built locally and loaded into kind. Kustomize base plus overlays for `local`, `ci`, and `cloud` if there is one (ADR 0003). Each Deployment has readiness and liveness probes, resource requests and limits, a non-root security context, and config from ConfigMaps and Secrets. Workers get a termination grace period longer than their longest call. A PodDisruptionBudget covers the API.
 
 ## 5. Interfaces
 - **HTTP API:** the endpoints in §4. Bearer token. Errors as RFC 9457 problem details.
-- **CLI** (`coverage-check`):
+- **CLI** (`coverage-check`). `seed`, `worker` and `report` exist from slice 3. `submit`, `status` and `exceptions` are thin API clients left to slice 7, if the demo needs them:
   - `submit <file>` sends a batch.
   - `status <batch>` shows its progress.
   - `exceptions [--requeue <id>]` lists or requeues exceptions.
@@ -123,8 +123,8 @@ The invariants (checked by the tests and by the invariant report after every cha
 | Slow or late reply | The one timeout is longer than the payer's longest call, so it is heard. If the call does time out, the retry carries the same key: the payer says it is still in progress, or replays its answer without billing again. |
 | Reply reaches a worker that lost its lease | Recorded against that attempt. The check is not touched (invariant 4). |
 | Worker pod killed mid-call | Its leases expire and the checks are claimed again. The new attempt has a new id and the same payer key, so an answer the payer already gave is not billed again. |
-| Worker receives SIGTERM | It stops claiming, finishes or releases in-flight checks within the grace period, and exits cleanly. |
-| Postgres restarts | Workers and the API fail their readiness checks and back off. No check is marked done without its result committed. |
+| Worker receives SIGTERM | It stops claiming and finishes in-flight checks within the grace period. Any left are released: queued again, the attempt not counted against the cap. Exit 0. |
+| Postgres restarts | The API answers 503 and workers wait and try again; on Kubernetes both also fail their readiness checks (slice 4). No check is marked done without its result committed. |
 | Duplicate batch submission | The original batch is returned (same key and body) or a 409 is returned (same key, different body). |
 | Scaled from 2 to 10 workers | Throughput stays at the limit. The rate does not go up (invariant 1). |
 
@@ -180,7 +180,7 @@ The invariants (checked by the tests and by the invariant report after every cha
   - Restart Postgres.
   - Raise the payer's failure rate.
   - The invariant report must pass.
-- **CI on every PR:** ruff, mypy, unit, integration, contract, image builds, kind end to end with the short chaos run, and gitleaks.
+- **CI on every PR:** ruff, mypy, unit, integration, contract, official FHIR validation, image builds, kind end to end with the short chaos run, and gitleaks.
 
 ### Local development
 `docker compose up` runs Postgres and the mock payer for slices 1 to 3. `uv run` runs the API (uvicorn) and the workers on the laptop, and `uv run coverage-check ...` is the CLI. From slice 4, `make up` runs everything on kind.

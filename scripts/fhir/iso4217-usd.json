@@ -1,0 +1,11 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "iso4217-usd",
+  "url": "urn:iso:std:iso:4217",
+  "name": "Iso4217UsdOnly",
+  "title": "ISO 4217, only the code this service writes",
+  "status": "active",
+  "caseSensitive": true,
+  "content": "fragment",
+  "concept": [{"code": "USD", "display": "United States dollar"}]
+}

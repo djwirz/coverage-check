@@ -21,8 +21,10 @@ from coverage_check.config import WorkerSettings
 from coverage_check.models import CheckRequest
 from coverage_check.policy import Decision, Done, GiveUp, Retry
 
-# Attempts that never reached the payer don't use up the cap.
+# Attempts that don't use up the cap: never sent, or handed back by a stopping worker.
 NOT_SENT = "not_sent"
+RELEASED = "released"
+UNCOUNTED = [NOT_SENT, RELEASED]
 MAX_KEPT_BODY = 2000
 
 
@@ -104,11 +106,11 @@ async def claim(
             await cur.execute(
                 "SELECT coalesce(max(number), 0) AS last,"
                 " count(*) FILTER (WHERE cycle = %(cycle)s"
-                "   AND outcome_class IS DISTINCT FROM %(not_sent)s) AS used,"
+                "   AND NOT coalesce(outcome_class = ANY(%(uncounted)s), false)) AS used,"
                 " count(*) FILTER (WHERE cycle = %(cycle)s"
                 "   AND outcome_class = 'malformed') AS malformed"
                 " FROM attempts WHERE check_id = %(id)s",
-                {"cycle": check["cycle"], "not_sent": NOT_SENT, "id": check["id"]},
+                {"cycle": check["cycle"], "uncounted": UNCOUNTED, "id": check["id"]},
             )
             past = await cur.fetchone()
         assert past is not None  # noqa: S101 - aggregates always return a row

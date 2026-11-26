@@ -197,6 +197,7 @@ def test_every_result_is_a_coverage_eligibility_response() -> None:
         lambda r: r["contained"].pop(),
         lambda r: r.pop("insurance"),
         lambda r: r["insurance"][0]["item"][0].pop("category"),
+        lambda r: r["insurance"][0]["item"][0]["benefit"][0]["allowedMoney"].update(currency="XXQ"),
     ],
 )
 def test_the_model_refuses_a_broken_result(break_it: Any) -> None:

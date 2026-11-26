@@ -81,7 +81,8 @@ class Coverage(Element):
 
 class Money(Element):
     value: int
-    currency: str
+    # The official validator can't check currencies without a terminology server, so we do.
+    currency: Literal["USD"]
 
 
 class Benefit(Element):

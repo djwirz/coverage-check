@@ -49,6 +49,9 @@ class WorkerSettings:
     backoff_cap_seconds: float = 30
     concurrency: int = 4
     idle_seconds: float = 0.5
+    # How long a stopping worker waits for calls in flight before it hands their checks back.
+    # Longer than the attempt timeout, so normally nothing is handed back.
+    shutdown_grace_seconds: float = 40
 
     def __post_init__(self) -> None:
         # In any one second a token bucket can let through burst + rate requests.

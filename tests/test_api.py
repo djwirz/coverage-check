@@ -238,3 +238,52 @@ def test_batch_size_is_capped(client: TestClient, size: int) -> None:
 @pytest.mark.parametrize("headers", [{}, {"Idempotency-Key": ""}, {"Idempotency-Key": "k" * 256}])
 def test_idempotency_key_is_required(client: TestClient, headers: dict[str, str]) -> None:
     assert client.post("/batches", json=batch_body(), headers=headers).status_code == 422
+
+
+def make_exception(db: psycopg.Connection[Any], check_id: str) -> None:
+    db.execute(
+        "UPDATE checks SET state = 'exception', exception_reason = 'payer_unavailable',"
+        " result = '{}' WHERE id = %s",
+        (check_id,),
+    )
+
+
+def test_requeue_sends_an_exception_round_again(
+    client: TestClient, db: psycopg.Connection[Any]
+) -> None:
+    batch = post(client, batch_body()).json()
+    check_id = batch["checks"][0]["id"]
+    make_exception(db, check_id)
+    response = client.post(f"/exceptions/{check_id}/requeue")
+    assert response.status_code == 200
+    check = response.json()
+    assert (check["state"], check["exception_reason"], check["result"]) == ("queued", None, None)
+    assert db.execute("SELECT cycle FROM checks").fetchone() == (1,)
+    assert client.get("/exceptions").json() == {"exceptions": []}
+    assert client.get(f"/batches/{batch['id']}").json()["done"] is False
+
+
+def test_only_an_exception_can_be_requeued(client: TestClient) -> None:
+    check_id = post(client, batch_body()).json()["checks"][0]["id"]
+    response = client.post(f"/exceptions/{check_id}/requeue")
+    assert response.status_code == 409
+    assert response.headers["content-type"] == "application/problem+json"
+    assert client.post(f"/exceptions/{uuid4()}/requeue").status_code == 404
+
+
+def test_of_many_requeues_at_once_one_succeeds(
+    client: TestClient, db: psycopg.Connection[Any]
+) -> None:
+    check_id = post(client, batch_body()).json()["checks"][0]["id"]
+    make_exception(db, check_id)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        statuses = list(
+            pool.map(lambda _: client.post(f"/exceptions/{check_id}/requeue").status_code, range(8))
+        )
+    assert sorted(statuses) == [200] + [409] * 7
+    assert db.execute("SELECT cycle FROM checks").fetchone() == (1,)
+
+
+def test_requeue_needs_the_token(client: TestClient) -> None:
+    response = client.post(f"/exceptions/{uuid4()}/requeue", headers={"Authorization": "Bearer no"})
+    assert response.status_code == 401
