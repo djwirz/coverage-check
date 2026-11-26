@@ -2,7 +2,7 @@
 
 Checks insurance coverage in bulk against a payer API that's slow, rate-limited and often fails. Every worker shares one rate limit, so the payer's limit is never exceeded, and every patient ends in exactly one honest state: covered, not covered, or an exception a person can work through. Results are FHIR R4. It runs on Kubernetes and keeps those promises while its pods are killed and scaled mid-batch.
 
-**Status:** early. Slices 1 to 4 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It runs on a local Kubernetes cluster, checked end to end in CI; still to come are chaos runs and observability.
+**Status:** early. Slices 1 to 5 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It runs on a local Kubernetes cluster and keeps its promises there while pods are killed ([below](#under-chaos)); still to come are observability and a demo.
 
 On a laptop, 3,000 checks with two workers took about four minutes and passed every line of the invariant report. The pace is set by the limiter (16 a second against the payer's 20), and dips when hanging calls fill the in-flight cap. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/).
 
@@ -36,6 +36,29 @@ make down
 | `migrate` | a job that creates the schema |
 
 Manifests are in `deploy/`, with `local` and `ci` overlays. Changing the database password in `.env` needs `make down` first.
+
+```bash
+make chaos
+```
+
+Disturbs a running batch and checks the invariants (next section).
+
+## Under chaos
+
+`make chaos` submits a batch and, as it progresses: kills a worker pod outright and deletes another; scales workers to 10, to 1 and back to 3; deletes the Postgres pod; makes the payer fail half its requests for a while; and tries to evict both API pods (the second eviction is refused). Then it runs the invariant report, and checks that leases really expired and the payer really was degraded.
+
+**Measured in GitHub Actions**, 3,000 checks, three runs each, on 2026-11-26:
+
+| | Time | Payer requests a second | Invariants |
+|---|---|---|---|
+| Undisturbed | just under four minutes, within a few seconds of each other | about 14 | all six passed, three times |
+| Under chaos | about four and a half minutes | 12 to 13 | all six passed, three times |
+
+The most the payer saw in any second was 17 or 18, against its limit of 20, and never more than 8 requests in flight against 10. No check was lost, none finished twice and none was billed twice.
+
+**Against what the limit allows:** the limiter is set to 16 a second, below the payer's 20, to leave room for network jitter. An undisturbed batch took about a seventh longer than 16 a second would. The likely reasons are calls that hang filling the in-flight cap, and the batch waiting on the last of them; an earlier run on a laptop showed both, but these runs weren't broken down.
+
+These are shared CI machines and a mock payer whose failure rates are our own choice, so read the figures as the shape, not a benchmark.
 
 ## Run it with Compose
 
