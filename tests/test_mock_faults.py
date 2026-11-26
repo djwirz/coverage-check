@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from collections import Counter
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import httpx2
 import pytest
-import uvicorn
 from pydantic import ValidationError
 from starlette.testclient import TestClient
 
 from coverage_check.mock_payer.app import create_app
 from coverage_check.mock_payer.profile import Profile, load_profile
-from tests.payer import member_body, profile
+from tests.payer import member_body, profile, serving
 
 CONFIG = Path(__file__).parent.parent / "config" / "mock-payer"
 HEADERS = {"Idempotency-Key": "attempt-1"}
@@ -71,24 +67,6 @@ def test_slow_late_and_timeout_take_their_time(db: Path, fault: str) -> None:
     assert entry["replied_at"] - entry["received_at"] >= 0.19
     assert entry["behaviour"] == fault
     assert entry["billable"] == (fault != "timeout")
-
-
-@contextmanager
-def serving(settings: Profile, db: Path) -> Iterator[str]:
-    """A real server, because only a real connection can be hung up on."""
-    server = uvicorn.Server(uvicorn.Config(create_app(settings, db), port=0, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    try:
-        deadline = time.monotonic() + 10
-        while not server.started:
-            assert time.monotonic() < deadline, "the server did not start"
-            time.sleep(0.01)
-        port = server.servers[0].sockets[0].getsockname()[1]
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10)
 
 
 def test_a_caller_that_gives_up_does_not_stop_the_payer(db: Path) -> None:
@@ -166,3 +144,14 @@ def test_the_calm_profile_has_no_faults() -> None:
 def test_a_bad_profile_is_refused(settings: dict[str, float]) -> None:
     with pytest.raises(ValidationError):
         profile(**settings)
+
+
+def test_a_key_still_being_handled_is_a_conflict_even_once_billed(db: Path) -> None:
+    """A retry during a late reply hears "in progress", and the answer only afterwards."""
+    settings = profile(late_rate=1, late_seconds=1)
+    with serving(settings, db) as url, httpx2.Client(base_url=url) as client:
+        with pytest.raises(httpx2.ReadTimeout):
+            client.post("/eligibility", json=member_body(), headers=HEADERS, timeout=0.2)
+        during = client.post("/eligibility", json=member_body(), headers=HEADERS)
+        assert during.status_code == 409
+        assert during.json() == {"error": "in_progress"}

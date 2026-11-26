@@ -1,7 +1,7 @@
 # 5. One shared rate limit and in-flight cap, in Postgres
 
 Date: 2026-11-23
-Status: Accepted
+Status: Accepted. Superseded in part by 10 (which database clock).
 
 ## Context
 The payer allows a fixed number of requests per second and of requests in flight, counted across the whole account. Workers scale from one replica to many, and pods come and go. A limit that each worker enforces on itself only holds if every worker knows how many others are running, and in a cluster that changes all the time. Invariant 1 (spec §6) says the payer's own log must never show the limit exceeded.

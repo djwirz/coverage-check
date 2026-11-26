@@ -59,8 +59,10 @@ def check_id(db: psycopg.Connection[Any]) -> str:
         ("result = '{}'", "result_only_when_final"),
         ("state = 'exception'", "reason_iff_exception"),
         ("exception_reason = 'x'", "reason_iff_exception"),
-        ("state = 'leased'", "lease_iff_leased"),
+        ("state = 'leased', lease_id = gen_random_uuid()", "lease_iff_leased"),
         ("lease_expires_at = now()", "lease_iff_leased"),
+        ("state = 'leased', lease_expires_at = now()", "lease_id_iff_leased"),
+        ("lease_id = gen_random_uuid()", "lease_id_iff_leased"),
         ("state = 'finished'", "checks_state_check"),
     ],
 )

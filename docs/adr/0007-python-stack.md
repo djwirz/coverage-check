@@ -1,7 +1,7 @@
 # 7. Python stack: FastAPI, asyncio workers, psycopg, uv
 
 Date: 2026-11-23
-Status: Accepted
+Status: Accepted. Superseded in part by 10 (`httpx2` for `httpx`).
 
 ## Context
 The project needs an HTTP API, a mock payer, async workers that spend most of their time waiting on the network, Postgres access with careful transactions, FHIR R4 output, and a CLI. Python is the default for Dan's projects where it fits, and Token Keeper and FHIR over MCP set the toolchain (uv, ruff, mypy strict, pytest).

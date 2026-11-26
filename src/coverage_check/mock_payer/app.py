@@ -80,14 +80,15 @@ class Payer:
                 counted = True
                 if check is None or not key or len(key) > MAX_KEY_LENGTH:
                     behaviour, response = "invalid_request", _error(400, "invalid_request")
+                elif key in self.pending_keys:
+                    # Even if the answer is decided: this key is still being handled.
+                    behaviour, response = "in_progress", _error(409, "in_progress")
                 elif (stored := self.store.answer(key)) is not None:
                     if stored[0] != body_sha256:
                         behaviour, response = "key_reused", _error(422, "key_reused")
                     else:
                         behaviour, replay = "replay", True
                         response = _reply(200, stored[1])
-                elif key in self.pending_keys:
-                    behaviour, response = "in_progress", _error(409, "in_progress")
                 else:
                     self.pending_keys.add(key)
                     claimed = key
@@ -156,6 +157,13 @@ def create_app(
         limit: Annotated[int, Query(ge=1, le=10_000)] = 1000,
     ) -> dict[str, list[dict[str, Any]]]:
         return {"requests": store.log(after, limit)}
+
+    @app.get("/limits")
+    async def limits() -> dict[str, int]:
+        return {
+            "rate_limit_per_second": profile.rate_limit_per_second,
+            "max_in_flight": profile.max_in_flight,
+        }
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

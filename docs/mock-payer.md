@@ -4,7 +4,7 @@ A payer of our own that misbehaves on demand (ADR 0006). The protocol and what i
 
 ## Protocol
 
-`POST /eligibility`, with an `Idempotency-Key` header (the attempt id) and this body:
+`POST /eligibility`, with an `Idempotency-Key` header (`<check id>:<cycle>`, [ADR 0010](adr/0010-one-payer-key-per-check.md)) and this body:
 
 ```json
 {
@@ -46,7 +46,7 @@ Names are carried but not matched. Anything but an answer has the body `{"error"
 | 500, 502, 503 | `server_error` | the payer failed |
 | 504 | `timed_out` | the payer gave up after a long wait |
 
-A key that has an answer gets the same answer again, and is not billed again. Errors store nothing, so the same key can be tried again.
+A key still being handled gets 409, even if its answer is already decided. After that, a key that has an answer gets the same answer again, and is not billed again. Errors store nothing, so the same key can be tried again.
 
 ## Limits
 
