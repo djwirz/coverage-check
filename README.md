@@ -2,13 +2,42 @@
 
 Checks insurance coverage in bulk against a payer API that's slow, rate-limited and often fails. Every worker shares one rate limit, so the payer's limit is never exceeded, and every patient ends in exactly one honest state: covered, not covered, or an exception a person can work through. Results are FHIR R4. It runs on Kubernetes and keeps those promises while its pods are killed and scaled mid-batch.
 
-**Status:** early. Slices 1 to 3 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It all runs on one machine; still to come are Kubernetes, chaos runs and observability.
+**Status:** early. Slices 1 to 4 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It runs on a local Kubernetes cluster, checked end to end in CI; still to come are chaos runs and observability.
 
 On a laptop, 3,000 checks with two workers took about four minutes and passed every line of the invariant report. The pace is set by the limiter (16 a second against the payer's 20), and dips when hanging calls fill the in-flight cap. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/).
 
 **Data:** synthetic only. Members come from [synthetic-cohort](https://github.com/djwirz/synthetic-cohort). Some insurer names are real companies', from Synthea's built-in list; the people, member ids and coverage are made up. There is no real payer: this project will only call its own mock.
 
-## Run it locally
+## Run it on Kubernetes
+
+Needs Docker, make, and **at least 8 GB of free disk**. kind and kubectl are fetched into `.cache/`, pinned and checksum-verified; your own kubectl and `~/.kube/config` are not touched.
+
+```bash
+make up
+```
+
+That creates a cluster (one control plane, two workers), builds and loads the image, writes random secrets to `.env` if there is none, deploys, and submits a sample batch.
+
+```bash
+make e2e
+```
+
+Submits 200 checks, waits, prints the invariant report and validates the stored results with HL7's validator (needs Java or a Java container).
+
+```bash
+make down
+```
+
+| In the cluster | What |
+|---|---|
+| `api` (2), `worker` (2) | the service; scale workers freely, the limit is shared |
+| `postgres` (1) | the queue and results, on its own volume |
+| `mock-payer` (1) | the payer and its request log, on its own volume |
+| `migrate` | a job that creates the schema |
+
+Manifests are in `deploy/`, with `local` and `ci` overlays. Changing the database password in `.env` needs `make down` first.
+
+## Run it with Compose
 
 Needs [uv](https://docs.astral.sh/uv/) and Docker. Copy `.env.example` to `.env` and replace every `change-me`.
 

@@ -63,6 +63,28 @@ jobs:
       - run: uv sync --locked
       - run: ./scripts/validate_fhir.sh
 
+  cluster:
+    name: kind end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      # The validator jar and FHIR packages, shared with the validation job.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .cache/validator_cli-*.jar
+            .cache/fhir-packages
+          key: fhir-${{ hashFiles('scripts/validate_fhir.sh') }}
+      - run: uv sync --locked
+      - run: make up OVERLAY=ci
+      - run: make e2e
+      - if: failure()
+        run: make debug
+      - if: always()
+        run: make down
+
   gitleaks:
     name: Secret scan
     runs-on: ubuntu-latest

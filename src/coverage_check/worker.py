@@ -12,6 +12,7 @@ import contextlib
 import logging
 import random
 import time
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -26,6 +27,7 @@ log = logging.getLogger("coverage_check.worker")
 DATABASE_RETRY_SECONDS = 2
 # How long to wait for a connection before saying the database is unavailable.
 DATABASE_WAIT_SECONDS = 5
+HEARTBEAT_SECONDS = 5
 
 Pool = AsyncConnectionPool[psycopg.AsyncConnection[Any]]
 
@@ -137,6 +139,38 @@ async def _loop(
             await pause(DATABASE_RETRY_SECONDS)
 
 
+async def heartbeat(pool: Pool, directory: Path, seconds: float = HEARTBEAT_SECONDS) -> None:
+    """For Kubernetes probes, which can't ask a worker anything: it serves no HTTP.
+
+    `alive` is touched while the event loop turns, `ready` only while the database answers.
+    A database outage makes workers unready; it must not get them restarted.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    while True:
+        (directory / "alive").touch()
+        try:
+            async with pool.connection(timeout=seconds) as conn:
+                await conn.execute("SELECT 1")
+        except (psycopg.OperationalError, PoolTimeout):
+            (directory / "ready").unlink(missing_ok=True)
+        else:
+            (directory / "ready").touch()
+        await asyncio.sleep(seconds)
+
+
+async def configure(pool: Pool, settings: WorkerSettings, stop: asyncio.Event) -> None:
+    """Set up the payer's bucket, waiting while the database or its schema isn't there yet."""
+    while not stop.is_set():
+        try:
+            async with pool.connection() as conn:
+                await limiter.configure(conn, settings)
+            return
+        except (psycopg.OperationalError, PoolTimeout, psycopg.errors.UndefinedTable):
+            log.warning("database_not_ready", exc_info=True)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), DATABASE_RETRY_SECONDS)
+
+
 async def run(settings: WorkerSettings, stop: asyncio.Event) -> None:
     """Work until `stop` is set, then finish what is in flight, within the grace period."""
     payer = PayerClient(settings.payer_url, settings.attempt_timeout_seconds)
@@ -144,14 +178,18 @@ async def run(settings: WorkerSettings, stop: asyncio.Event) -> None:
         async with AsyncConnectionPool(
             settings.database_url,
             min_size=1,
-            max_size=settings.concurrency,
+            # One more than the tasks, so the heartbeat never waits behind them.
+            max_size=settings.concurrency + 1,
             open=False,
             timeout=DATABASE_WAIT_SECONDS,
             check=AsyncConnectionPool.check_connection,
         ) as pool:
-            await pool.wait(timeout=30)
-            async with pool.connection() as conn:
-                await limiter.configure(conn, settings)
+            beating = (
+                asyncio.create_task(heartbeat(pool, Path(settings.health_dir)))
+                if settings.health_dir
+                else None
+            )
+            await configure(pool, settings, stop)
             log.info("worker_started", extra={"concurrency": settings.concurrency})
             tasks = [
                 asyncio.create_task(_loop(pool, payer, settings, stop))
@@ -172,6 +210,9 @@ async def run(settings: WorkerSettings, stop: asyncio.Event) -> None:
                 for outcome in await asyncio.gather(*tasks, return_exceptions=True):
                     if isinstance(outcome, Exception):
                         log.error("task_failed", extra={"error": type(outcome).__name__})
+                if beating is not None:
+                    beating.cancel()
+                    await asyncio.gather(beating, return_exceptions=True)
             log.info("worker_stopped")
     finally:
         await payer.close()

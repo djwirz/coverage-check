@@ -26,7 +26,7 @@ RATE_MARGIN = 2
 
 @dataclass(frozen=True)
 class WorkerSettings:
-    """Defaults fit config/mock-payer/default.toml. Every field can be set from the environment."""
+    """Defaults fit deploy/base/mock-payer/. Any field can be set from the environment."""
 
     database_url: str = field(repr=False)
     payer_url: str = "http://127.0.0.1:8001"
@@ -52,6 +52,8 @@ class WorkerSettings:
     # How long a stopping worker waits for calls in flight before it hands their checks back.
     # Longer than the attempt timeout, so normally nothing is handed back.
     shutdown_grace_seconds: float = 40
+    # Where to touch the files Kubernetes probes look at. Empty: don't.
+    health_dir: str = ""
 
     def __post_init__(self) -> None:
         # In any one second a token bucket can let through burst + rate requests.

@@ -33,7 +33,7 @@ services:
     ports:
       - "127.0.0.1:${MOCK_PAYER_PORT:-8001}:8000"
     volumes:
-      - ./config/mock-payer:/etc/mock-payer:ro
+      - ./deploy/base/mock-payer:/etc/mock-payer:ro
       - payer-data:/data
     read_only: true
     cap_drop: [ALL]

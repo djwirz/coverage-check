@@ -55,7 +55,7 @@ A key still being handled gets 409, even if its answer is already decided. After
 
 ## Failure profile
 
-A TOML file, named by `MOCK_PAYER_PROFILE`: [`default.toml`](../config/mock-payer/default.toml) is a moderately bad day, [`calm.toml`](../config/mock-payer/calm.toml) has no faults. Each `*_rate` is the share of accepted new requests that get that fault.
+A TOML file, named by `MOCK_PAYER_PROFILE`: [`default.toml`](../deploy/base/mock-payer/default.toml) is a moderately bad day, [`calm.toml`](../deploy/base/mock-payer/calm.toml) has no faults. Each `*_rate` is the share of accepted new requests that get that fault.
 
 | Setting | What the payer does | Billed |
 |---|---|---|

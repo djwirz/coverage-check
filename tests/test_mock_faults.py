@@ -16,7 +16,7 @@ from coverage_check.mock_payer.app import create_app
 from coverage_check.mock_payer.profile import Profile, load_profile
 from tests.payer import member_body, profile, serving
 
-CONFIG = Path(__file__).parent.parent / "config" / "mock-payer"
+CONFIG = Path(__file__).parent.parent / "deploy" / "base" / "mock-payer"
 HEADERS = {"Idempotency-Key": "attempt-1"}
 
 

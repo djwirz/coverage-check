@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Validate example results with HL7's official validator, for FHIR R4 (invariant 6).
+# Validate results with HL7's official validator, for FHIR R4 (invariant 6). With no
+# argument, examples made by the mapping code; with a directory under the repo, its files.
 # Uses Java if there is one, and a Java container if not. Downloads go to .cache/.
 set -euo pipefail
 
@@ -20,8 +21,6 @@ echo "$SHA256  $jar" | shasum -a 256 -c - >/dev/null || {
   exit 1
 }
 
-rm -rf .cache/fhir-examples
-uv run python scripts/fhir_examples.py .cache/fhir-examples/good .cache/fhir-examples/broken
 
 # -tx n/a: no terminology server, so the run doesn't depend on one and sends nothing out.
 # Codes from outside the R4 packages therefore go unchecked. ISO 4217 is one, and a required
@@ -36,6 +35,14 @@ validate() {
   fi
 }
 
+if [ $# -gt 0 ]; then
+  validate "$1"
+  echo "Every result in $1 is valid R4."
+  exit 0
+fi
+
+rm -rf .cache/fhir-examples
+uv run python scripts/fhir_examples.py .cache/fhir-examples/good .cache/fhir-examples/broken
 validate .cache/fhir-examples/good
 
 if validate .cache/fhir-examples/broken >.cache/fhir-examples/broken.log 2>&1; then

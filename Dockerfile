@@ -17,6 +17,10 @@ RUN uv sync --locked --no-dev --no-editable
 FROM python:3.12-slim-bookworm@sha256:44cf1793efa7c7a476bb0f2cff81443f4a072c90c1cb127e2924933daa3e8c64
 RUN useradd --system --uid 10001 --no-create-home app && install -d -o app /data
 COPY --from=builder /app/.venv /app/.venv
+# The migration job runs `alembic upgrade head` from here.
+WORKDIR /app
+COPY alembic.ini ./
+COPY migrations ./migrations
 ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1
 USER 10001
 CMD ["coverage-check", "--help"]

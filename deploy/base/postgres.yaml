@@ -1,0 +1,78 @@
+# Gives the one Postgres pod a stable DNS name. No load balancing: there is one.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  clusterIP: None
+  selector: {app.kubernetes.io/name: postgres}
+  ports:
+    - {name: postgres, port: 5432}
+---
+# A StatefulSet so the pod keeps its name and its disk across restarts (ADR 0011).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: postgres}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: postgres}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: postgres:18@sha256:64c8b0d31e4ab6ea665e8426ea406a94bf52de3c05b3a4a8bf713704eefa9328
+          env:
+            - {name: POSTGRES_USER, value: coverage_check}
+            - {name: POSTGRES_DB, value: coverage_check}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: coverage-check, key: POSTGRES_PASSWORD}
+          ports:
+            - {containerPort: 5432}
+          # Over TCP, which the temporary server used during first-time setup doesn't open.
+          startupProbe:
+            exec: {command: [pg_isready, -h, 127.0.0.1, -U, coverage_check]}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec: {command: [pg_isready, -h, 127.0.0.1, -U, coverage_check]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: [pg_isready, -h, 127.0.0.1, -U, coverage_check]}
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            # Postgres 18 and later keep data below this path.
+            - {name: data, mountPath: /var/lib/postgresql}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: run, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 1Gi}

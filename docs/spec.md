@@ -1,6 +1,6 @@
 # Coverage Check: spec
 
-Status: Accepted (PR #1), updated with slices 1 to 3 · Date: 2026-11-26 · Owner: Dan
+Status: Accepted (PR #1), updated with slices 1 to 4 · Date: 2026-11-26 · Owner: Dan
 
 ## 1. Problem
 
@@ -87,7 +87,7 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
 - **Retry policy.** Retry 429s (honoring `Retry-After`), 409 "still in progress", 5xx errors, timeouts and connection errors, with exponential backoff and full jitter, up to an attempt cap. "Member not found", "invalid request" and malformed replies that repeat go to `exception` with a reason. A retry happens by setting the check's `not_before` time. Workers never sleep on it.
 - **Mock payer.** A separate FastAPI service that knows the synthetic members from `synthetic-cohort` (ADR 0008). Their `missing` and `ambiguous` states are only labels there, so the mock makes them happen: no such member, or more than one match. Its failure profile is a file, from a ConfigMap in the cluster: how often each failure happens, a latency range, its own rate limit and in-flight cap, and late replies (docs/mock-payer.md). It honors idempotency keys, so a repeated key returns the first answer. It keeps its own request log in SQLite, which is the evidence for invariant 1 (ADRs 0006 and 0009). A request counts as in flight there until the payer has finished with it, even if the caller gave up.
 - **FHIR mapping.** A payer reply becomes a `CoverageEligibilityResponse`: outcome, whether coverage is in force, the insurer and plan, the service date, and the benefit items the mock returns. It references a contained `Coverage` and `Patient`. An exception gets one too, with outcome `error` and the reason. CI validates examples from this mapping with HL7's official validator for R4. It runs with no terminology server, so codes from outside the R4 packages are not checked there.
-- **Kubernetes.** Images built locally and loaded into kind. Kustomize base plus overlays for `local`, `ci`, and `cloud` if there is one (ADR 0003). Each Deployment has readiness and liveness probes, resource requests and limits, a non-root security context, and config from ConfigMaps and Secrets. Workers get a termination grace period longer than their longest call. A PodDisruptionBudget covers the API.
+- **Kubernetes.** Images built locally and loaded into kind. Kustomize base plus overlays for `local`, `ci`, and `cloud` if there is one (ADR 0003). Each Deployment has readiness and liveness probes (workers serve no HTTP, so theirs look at files the worker touches), resource requests and limits, a non-root security context, and config from ConfigMaps and Secrets. Workers get a termination grace period longer than their longest call. A PodDisruptionBudget covers the API.
 
 ## 5. Interfaces
 - **HTTP API:** the endpoints in §4. Bearer token. Errors as RFC 9457 problem details.
@@ -101,6 +101,7 @@ It shows Python for a real backend service, async workers, PostgreSQL used as a 
 - **Cluster:**
   - `make up` creates the kind cluster, builds and loads images, applies the local overlay, waits for readiness and seeds.
   - `make down` removes the cluster.
+  - `make e2e` submits a batch, checks the invariants and validates the stored results.
   - `make chaos` runs the chaos scenario against a running cluster.
 - **Config:** payer limit, in-flight cap, lease length, attempt cap, backoff, and the failure profile, all in ConfigMaps. The API token and database password in Secrets. No secret values in the repo.
 
@@ -186,7 +187,7 @@ The invariants (checked by the tests and by the invariant report after every cha
 `docker compose up` runs Postgres and the mock payer for slices 1 to 3. `uv run` runs the API (uvicorn) and the workers on the laptop, and `uv run coverage-check ...` is the CLI. From slice 4, `make up` runs everything on kind.
 
 ## 10. Acceptance criteria (v1 "done", depth 3)
-1. **One command:** `make up` on a clean machine with Docker, kind and kubectl brings up the whole system and seeds it. `make down` removes it.
+1. **One command:** `make up` on a clean machine with Docker and make brings up the whole system and seeds it, fetching pinned kind and kubectl itself (ADR 0011). It needs several gigabytes of free disk. `make down` removes it.
 2. **Correct under chaos:** a chaos run on a batch of a few thousand checks passes the invariant report. It's in the README with the numbers in words.
 3. **Throughput:** the batch finishes in about the time the payer's limit allows, with the measured figure and spread in the README.
 4. **Tests and CI:** every automated category in §9 runs on each PR, including the kind end-to-end run.
@@ -235,7 +236,7 @@ A companion course: master.dev's "Kubernetes: Production-Grade Container Orchest
 | Cloud | none | none | per §13 Q3 |
 
 ## 13. Open questions (settle before slice 1 unless noted)
-1. **Postgres in the cluster, and the CNI.** A plain StatefulSet with a PersistentVolumeClaim, an operator such as CloudNativePG, or a database outside the cluster? Recommendation: a plain StatefulSet. It's enough for one instance, and an operator is a lot to learn for no gain here. kind's default CNI may not enforce NetworkPolicy, so check that and pick a CNI that does if §8's policies stay in. Decide at slice 4 (ADR).
+1. **Postgres in the cluster, and the CNI.** Settled at slice 4: a plain StatefulSet and kind's default networking (ADR 0011). Slice 5 still has to show that it enforces NetworkPolicy.
 2. **Autoscaling.** No autoscaling (scale by hand in the chaos run), an HPA on a custom metric through a Prometheus adapter, or KEDA scaling on Postgres queue depth? Recommendation: KEDA on queue depth if it installs cleanly on kind. CPU is the wrong signal for workers that mostly wait on the payer. Either way, the limiter is what keeps the rate safe, not the replica count. Check current KEDA docs and its Postgres scaler at slice 5.
 3. **A public deploy, and where.** A managed cluster isn't free (build-plan `research/free-tiers-2026-11-18.md`). Options:
    - k3s on an always-free VM.
