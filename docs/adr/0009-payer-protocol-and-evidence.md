@@ -1,7 +1,7 @@
 # 9. The payer protocol, and what the mock payer records
 
 Date: 2026-11-26
-Status: Accepted
+Status: Accepted. Superseded in part by 10 (the payer's idempotency key).
 
 ## Context
 ADR 0006 chose our own mock payer. Slice 2 builds it, so two things must be fixed that the workers (slice 3) and the invariant report will depend on: the protocol (spec §13 Q5), and the payer's record of what it received, which is the evidence for invariant 1.

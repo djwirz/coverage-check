@@ -1,7 +1,7 @@
 # 4. Postgres as the job queue, with leased claims
 
 Date: 2026-11-23
-Status: Accepted
+Status: Accepted. Superseded in part by 10 (the payer's idempotency key).
 
 ## Context
 Checks need a queue that:
