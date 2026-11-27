@@ -1,0 +1,27 @@
+# Metrics, traces, the dashboard and the alerts (spec §7, ADR 0013).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - metrics.yaml
+  - prometheus.yaml
+  - grafana.yaml
+  - otel-collector.yaml
+  - jaeger.yaml
+  - network-policies.yaml
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      - prometheus.yml
+      - alerts.yml
+  - name: otel-collector-config
+    files:
+      - config.yaml=otel-collector.yml
+  - name: grafana-datasources
+    files:
+      - grafana/datasources.yml
+  - name: grafana-dashboard-providers
+    files:
+      - grafana/dashboards.yml
+  - name: grafana-dashboards
+    files:
+      - grafana/coverage-check.json

@@ -1,0 +1,55 @@
+# The database's numbers for Prometheus, in one place: a worker's own counters would die
+# with it (ADR 0013). Reads only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics
+spec:
+  selector: {app.kubernetes.io/name: metrics}
+  ports:
+    - {name: http, port: 9000}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: metrics}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: metrics}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: metrics
+          image: coverage-check:local
+          imagePullPolicy: Never
+          command: [coverage-check, metrics]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: coverage-check, key: DATABASE_URL}
+          ports:
+            - {containerPort: 9000}
+          # A scrape reads the database, so the probes only ask whether the port is open.
+          # While Postgres is away it stays up and says so (coverage_check_database_up).
+          readinessProbe:
+            tcpSocket: {port: 9000}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: 9000}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}

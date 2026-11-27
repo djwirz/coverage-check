@@ -2,7 +2,7 @@
 
 Checks insurance coverage in bulk against a payer API that's slow, rate-limited and often fails. Every worker shares one rate limit, so the payer's limit is never exceeded, and every patient ends in exactly one honest state: covered, not covered, or an exception a person can work through. Results are FHIR R4. It runs on Kubernetes and keeps those promises while its pods are killed and scaled mid-batch.
 
-**Status:** early. Slices 1 to 5 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It runs on a local Kubernetes cluster and keeps its promises there while pods are killed ([below](#under-chaos)); still to come are observability and a demo.
+**Status:** early. Slices 1 to 5 and the observability half of slice 6 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It runs on a local Kubernetes cluster and keeps its promises there while pods are killed ([below](#under-chaos)); still to come are the deploy decision and a demo.
 
 On a laptop, 3,000 checks with two workers took about four minutes and passed every line of the invariant report. The pace is set by the limiter (16 a second against the payer's 20), and dips when hanging calls fill the in-flight cap. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/).
 
@@ -22,7 +22,7 @@ That creates a cluster (one control plane, two workers), builds and loads the im
 make e2e
 ```
 
-Submits 200 checks, waits, prints the invariant report and validates the stored results with HL7's validator (needs Java or a Java container).
+Submits 200 checks, waits, prints the invariant report, checks that Prometheus and Jaeger saw them, and validates the stored results with HL7's validator (needs Java or a Java container).
 
 ```bash
 make down
@@ -34,6 +34,10 @@ make down
 | `postgres` (1) | the queue and results, on its own volume |
 | `mock-payer` (1) | the payer and its request log, on its own volume |
 | `migrate` | a job that creates the schema |
+
+| `metrics` (1) | the database's numbers, for Prometheus |
+| `prometheus`, `grafana` | metrics, alerts and the dashboard |
+| `otel-collector`, `jaeger` | one trace for each check |
 
 Manifests are in `deploy/`, with `local` and `ci` overlays. Changing the database password in `.env` needs `make down` first.
 
@@ -61,6 +65,26 @@ The most the payer saw in any second was 17 to 19, against its limit of 20, and 
 **The margin is thinner than it looks.** The limiter never lets more than 18 requests start in a second, yet the payer has seen 19: requests that set off apart can arrive closer together. On a network with more delay than one machine's, the setting would need to come down.
 
 These are shared CI machines and a mock payer whose failure rates are our own choice, so read the figures as the shape, not a benchmark.
+
+## Watch it
+
+```bash
+make dashboard
+```
+
+Grafana on <http://127.0.0.1:3000>, read-only with no login: the payer's request rate against its limit, requests in flight, checks by state, attempts, retries and lease expiries. Prometheus's alerts are on <http://127.0.0.1:9090/alerts>.
+
+```bash
+make traces
+```
+
+Jaeger on <http://127.0.0.1:16686>: one trace per check, from submit through each claim, payer call and retry.
+
+```bash
+make alerts
+```
+
+Fires each of the five alerts once, on purpose, and puts everything back. What each means and what to do: [docs/runbook.md](docs/runbook.md). Where the numbers come from: [ADR 0013](docs/adr/0013-where-telemetry-comes-from.md).
 
 ## Run it with Compose
 

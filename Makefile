@@ -1,5 +1,5 @@
 # The local Kubernetes cluster (kind). Scripts act only on the cluster they create.
-.PHONY: up down e2e chaos report debug
+.PHONY: up down e2e chaos alerts dashboard traces report debug
 
 OVERLAY ?= local
 
@@ -15,6 +15,16 @@ e2e:
 # CHAOS_COUNT sets the batch size.
 chaos:
 	./scripts/k8s/chaos.sh
+
+# Fire each alert once, on purpose.
+alerts:
+	./scripts/k8s/alerts.sh
+
+dashboard:
+	./scripts/k8s/forward.sh dashboard
+
+traces:
+	./scripts/k8s/forward.sh traces
 
 report:
 	./scripts/k8s/report.sh $(BATCH)

@@ -1,0 +1,51 @@
+# Spec §7. Each one is covered in docs/runbook.md and fired on purpose by `make alerts`.
+# Tested without a cluster by scripts/check_observability.sh.
+groups:
+  - name: coverage-check
+    rules:
+      - alert: PayerRateNearLimit
+        # The limiter is set to 16 a second against the payer's 20, which is 80%.
+        expr: >-
+          sum(rate(mock_payer_requests_total[1m]))
+          > 0.85 * max(mock_payer_rate_limit_per_second)
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: The payer is getting more than 85% of its rate limit, and has for a minute.
+          runbook: docs/runbook.md#payerratenearlimit
+      - alert: PayerOverLimit
+        # The payer turned a request away for being over a limit: invariant 1 is broken.
+        # Counted by the payer as it happens, so no one-second window is missed between scrapes.
+        expr: >-
+          sum(increase(mock_payer_requests_total{behaviour=~"rate_limit|in_flight_limit"}[5m]))
+          > 0
+        labels: {severity: critical}
+        annotations:
+          summary: The payer refused a request for being over its limit.
+          runbook: docs/runbook.md#payeroverlimit
+      - alert: ExceptionsRising
+        # "Member not found" and "several matches" are the payer's answers about a member, and
+        # about a quarter of the sample batch. The other reasons mean something is wrong.
+        expr: >-
+          sum(delta(coverage_check_final_checks{result="exception",
+          reason!~"member_not_found|multiple_matches"}[2m])) > 20
+        labels: {severity: warning}
+        annotations:
+          summary: Checks are failing for reasons that are not about the member.
+          runbook: docs/runbook.md#exceptionsrising
+      - alert: LeaseStuck
+        # Three lease lengths (45 s). A lease that ran out is taken back by the next claim,
+        # so an old one means no worker is claiming.
+        expr: coverage_check_oldest_lease_age_seconds > 135
+        labels: {severity: critical}
+        annotations:
+          summary: A check has been leased for over three lease lengths.
+          runbook: docs/runbook.md#leasestuck
+      - alert: TelemetryMissing
+        # Without these numbers every alert above is silent, which looks like all is well.
+        expr: up == 0 or coverage_check_database_up == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Prometheus cannot read the engine's or the payer's numbers.
+          runbook: docs/runbook.md#telemetrymissing

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
@@ -18,10 +19,12 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
+from prometheus_client import start_http_server
 from pydantic import ValidationError
 
 from coverage_check.config import require_env
 from coverage_check.mock_payer.members import Directory
+from coverage_check.mock_payer.metrics import PayerMetrics
 from coverage_check.mock_payer.profile import Profile, load_profile
 from coverage_check.mock_payer.store import Store
 from coverage_check.models import CheckRequest
@@ -48,6 +51,14 @@ class Payer:
         self.recent: deque[float] = deque()  # arrival times in the last second
         self.in_flight = 0
         self.pending_keys: set[str] = set()
+        self.metrics = PayerMetrics(
+            lambda: (
+                self.in_flight,
+                self.profile.rate_limit_per_second,
+                self.profile.max_in_flight,
+            ),
+            clock,
+        )
 
     async def handle(self, key: str | None, raw: bytes) -> Response:
         try:
@@ -70,6 +81,7 @@ class Payer:
             while self.recent and self.recent[0] <= now - 1:
                 self.recent.popleft()
             self.recent.append(now)
+            self.metrics.window(now, len(self.recent))
             retry_after = {"Retry-After": str(self.profile.retry_after_seconds)}
             if len(self.recent) > self.profile.rate_limit_per_second:
                 behaviour, response = "rate_limit", _error(429, "rate_limited", retry_after)
@@ -101,6 +113,7 @@ class Payer:
             if claimed is not None:
                 self.pending_keys.discard(claimed)
             self.store.replied(request_id, self.clock(), status, behaviour, replay)
+            self.metrics.requests.labels(behaviour).inc()
 
     async def _serve(
         self, request_id: int, key: str, body_sha256: str, check: CheckRequest
@@ -140,10 +153,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Its own port, so whoever reads the numbers can't send an eligibility request.
+        port = os.environ.get("MOCK_PAYER_METRICS_PORT")
+        serving = start_http_server(int(port), registry=payer.metrics.registry) if port else None
         yield
+        if serving:
+            serving[0].shutdown()
+            serving[0].server_close()
         store.close()
 
     app = FastAPI(title="mock-payer", lifespan=lifespan)
+    app.state.metrics = payer.metrics
 
     @app.post("/eligibility")
     async def eligibility(request: Request) -> Response:

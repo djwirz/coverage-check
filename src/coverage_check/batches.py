@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from psycopg import AsyncConnection
 from psycopg.rows import class_row, dict_row
 
+from coverage_check import tracing
 from coverage_check.models import (
     Batch,
     BatchRequest,
@@ -58,24 +59,38 @@ async def submit_batch(
             if bytes(existing_digest) != digest:
                 raise IdempotencyConflictError
             return existing_id, False
+        # One trace per check, started here; workers continue it (ADR 0013).
+        rows = []
+        for position, c in enumerate(request.checks):
+            check_id = uuid4()
+            with tracing.tracer().start_span(
+                "check.submitted",
+                context=tracing.resume(None),
+                attributes={
+                    "check.id": str(check_id),
+                    "batch.id": str(batch_id),
+                    "batch.position": position,
+                },
+            ) as span:
+                rows.append(
+                    (
+                        check_id,
+                        batch_id,
+                        position,
+                        c.member_id,
+                        c.given,
+                        c.family,
+                        c.birth_date,
+                        c.payer,
+                        c.service_date,
+                        tracing.carry(span),
+                    )
+                )
         await cur.executemany(
             "INSERT INTO checks (id, batch_id, position, member_id, given, family,"
-            " birth_date, payer, service_date)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            [
-                (
-                    uuid4(),
-                    batch_id,
-                    position,
-                    c.member_id,
-                    c.given,
-                    c.family,
-                    c.birth_date,
-                    c.payer,
-                    c.service_date,
-                )
-                for position, c in enumerate(request.checks)
-            ],
+            " birth_date, payer, service_date, traceparent)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            rows,
         )
     return batch_id, True
 

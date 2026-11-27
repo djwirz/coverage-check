@@ -2,6 +2,8 @@
 
 A payer of our own that misbehaves on demand (ADR 0006). The protocol and what it records are in [ADR 0009](adr/0009-payer-protocol-and-evidence.md). Everything about it is synthetic: the members are [synthetic-cohort](https://github.com/djwirz/synthetic-cohort)'s, and the plans and benefits are made up.
 
+Prometheus reads what it saw from a second port (`MOCK_PAYER_METRICS_PORT`, [ADR 0013](adr/0013-where-telemetry-comes-from.md)): requests by what it did with them, requests in flight, its limits, and the most requests in any one second over the last 15.
+
 ## Protocol
 
 `POST /eligibility`, with an `Idempotency-Key` header (`<check id>:<cycle>`, [ADR 0010](adr/0010-one-payer-key-per-check.md)) and this body:

@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+from opentelemetry import trace
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
-from coverage_check import limiter, queue
+from coverage_check import limiter, queue, tracing
 from coverage_check.config import WorkerSettings
 from coverage_check.payer_client import PayerClient
 from coverage_check.policy import Failed, GiveUp, Retry, backoff_seconds, classify
@@ -36,23 +37,39 @@ async def handle(
     pool: Pool, payer: PayerClient, settings: WorkerSettings, claimed: queue.Claim
 ) -> None:
     """One attempt."""
+    span = trace.get_current_span()
+    context = span.get_span_context()
     ids = {
         "batch_id": claimed.batch_id,
         "check_id": claimed.check_id,
         "attempt_id": claimed.attempt_id,
         "attempt": claimed.attempts,
     }
+    if context.is_valid:
+        ids["trace_id"] = trace.format_trace_id(context.trace_id)
     if time.monotonic() - claimed.granted_at > settings.grant_max_age_seconds:
         # Too old to send safely. Give the check back; this didn't use an attempt.
         async with pool.connection() as conn:
             await queue.finish(conn, claimed, Retry("stale_grant"), attempt_class=queue.NOT_SENT)
+        span.set_attribute("attempt.outcome", queue.NOT_SENT)
         log.warning("grant_expired", extra=ids)
         return
 
     started = time.monotonic()
     try:
-        seen = await payer.ask(claimed.request, claimed.key)
+        with tracing.tracer().start_as_current_span(
+            "payer.call", kind=trace.SpanKind.CLIENT
+        ) as call:
+            seen = await payer.ask(claimed.request, claimed.key)
+            if isinstance(seen, Failed):
+                call.set_attribute("error.type", seen.kind)
+                call.set_status(trace.StatusCode.ERROR)
+            else:
+                call.set_attribute("http.response.status_code", seen.status)
+                if seen.status >= 400:
+                    call.set_status(trace.StatusCode.ERROR)
     except asyncio.CancelledError:
+        span.set_attribute("attempt.outcome", queue.RELEASED)
         # Out of grace. Hand the check back now and don't make it wait for its lease. The
         # payer may have the request, so the slot stays; the same key makes asking again safe.
         async with pool.connection() as conn:
@@ -96,6 +113,14 @@ async def handle(
             delay_seconds=delay,
             release_slot=not keep_slot,
         )
+    span.set_attributes(
+        {
+            "attempt.outcome": attempt_class,
+            "attempt.decision": type(decision).__name__,
+            "attempt.late": not held,
+            "attempt.retry_delay_seconds": round(delay, 3),
+        }
+    )
     log.info(
         "attempt" if held else "late_reply",
         extra={
@@ -107,6 +132,30 @@ async def handle(
     )
 
 
+async def _traced(
+    pool: Pool,
+    payer: PayerClient,
+    settings: WorkerSettings,
+    claimed: queue.Claim,
+    claim_started_ns: int,
+) -> None:
+    """One attempt, in its check's trace, with the claim that led to it."""
+    tracer = tracing.tracer()
+    with tracer.start_as_current_span(
+        "check.attempt",
+        context=tracing.resume(claimed.traceparent),
+        start_time=claim_started_ns,
+        attributes={
+            "check.id": str(claimed.check_id),
+            "batch.id": str(claimed.batch_id),
+            "attempt.id": str(claimed.attempt_id),
+            "attempt.number": claimed.attempts,
+        },
+    ):
+        tracer.start_span("check.claim", start_time=claim_started_ns).end()
+        await handle(pool, payer, settings, claimed)
+
+
 async def _loop(
     pool: Pool, payer: PayerClient, settings: WorkerSettings, stop: asyncio.Event
 ) -> None:
@@ -116,17 +165,23 @@ async def _loop(
 
     while not stop.is_set():
         try:
+            claim_started_ns = time.time_ns()
             async with pool.connection() as conn:
                 claimed = await queue.claim(conn, settings)
             match claimed:
                 case queue.Claim():
-                    await handle(pool, payer, settings, claimed)
+                    await _traced(pool, payer, settings, claimed, claim_started_ns)
                 case queue.Wait(seconds):
                     # A little jitter, so waiting workers don't all come back at once.
                     await pause(seconds + random.uniform(0, 0.2 / settings.rate_per_second))  # noqa: S311
                 case queue.Idle():
                     await pause(settings.idle_seconds * random.uniform(0.5, 1.5))  # noqa: S311
-                case queue.Exhausted(check_id):
+                case queue.Exhausted(check_id, traceparent):
+                    tracing.tracer().start_span(
+                        "check.gave_up",
+                        context=tracing.resume(traceparent),
+                        attributes={"check.id": str(check_id)},
+                    ).end()
                     log.info(
                         "gave_up", extra={"check_id": check_id, "outcome": "payer_unavailable"}
                     )

@@ -10,6 +10,7 @@ resources:
   - worker.yaml
   - api-pdb.yaml
   - network-policies.yaml
+  - observability
 # Generated names carry a hash of the content, so a change rolls the pods that use it.
 configMapGenerator:
   - name: worker-config

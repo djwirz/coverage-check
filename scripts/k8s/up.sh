@@ -64,12 +64,12 @@ k delete job migrate --ignore-not-found
 k apply -k "deploy/overlays/$OVERLAY"
 if $existed; then
   # The image keeps its tag, so ask for new pods to pick it up.
-  k rollout restart deployment/api deployment/worker deployment/mock-payer
+  k rollout restart deployment/api deployment/worker deployment/mock-payer deployment/metrics
 fi
 
 k rollout status statefulset/postgres --timeout=300s
 k wait --for=condition=complete job/migrate --timeout=300s
-for deployment in mock-payer api worker; do
+for deployment in mock-payer api worker metrics otel-collector jaeger prometheus grafana; do
   k rollout status "deployment/$deployment" --timeout=300s
 done
 
