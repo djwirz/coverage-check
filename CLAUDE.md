@@ -13,7 +13,7 @@ Slices 1 to 5 (spec §11) are built: the project and CI, the schema, the batch A
 - ADRs are written as `Accepted` in the PR that adds them, and merging is the acceptance. Never rewrite a merged ADR's decision. Add a new ADR that supersedes it.
 - When the spec and the code disagree, stop and ask. If the decision changes, update the spec in the same PR.
 - Kubernetes is new ground for Dan. In each Kubernetes PR, explain what each new object does and why it's there, briefly, in the PR description, so the PR doubles as notes.
-- Built with Claude Code in the open: the case study gets a section on how AI was used and where it was wrong, so note real mistakes in PR descriptions.
+- Built with Claude Code. The case study says so once, briefly, under "How it was built"; mistakes go under "What went wrong" without attributing them to the AI. Note real mistakes in PR descriptions.
 
 ## Constraints
 - Never employer code, data or names beyond what's public. Synthetic data only.
