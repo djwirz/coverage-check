@@ -1,6 +1,6 @@
 # Coverage Check: spec
 
-Status: Accepted (PR #1), updated with slices 1 to 6a · Date: 2026-11-26 · Owner: Dan
+Status: Accepted (PR #1), updated with slices 1 to 6 · Date: 2026-11-26 · Owner: Dan
 
 ## 1. Problem
 
@@ -199,7 +199,7 @@ Who counts what, and where traces are kept: ADR 0013. What each alert means: [ru
 3. **Throughput:** the batch finishes in about the time the payer's limit allows, with the measured figure and spread in the README.
 4. **Tests and CI:** every automated category in §9 runs on each PR, including the kind end-to-end run.
 5. **Observed:** the dashboard, a trace screenshot of one check with a retry, and alerts that have each been fired once on purpose, with `docs/runbook.md` covering each.
-6. **Deployed:** per §13 Q3. Either a public cluster from `main` with a budget alarm first, or, if that's cut, CI's kind cluster as the deployed environment, with the reason in an ADR.
+6. **Deployed:** per ADR 0014. A demo window on EKS, run by hand from `main` with the budget alarm already there, which destroys what it created. Between windows, CI's kind cluster is where the system runs.
 7. **Record:** ADRs for every expensive decision, and each PR says how AI was used and what it got wrong.
 
 Stretch: autoscaling on queue depth, a cloud deploy, Helm packaging, a read-only page.
@@ -245,13 +245,8 @@ A companion course: master.dev's "Kubernetes: Production-Grade Container Orchest
 ## 13. Open questions (settle before slice 1 unless noted)
 1. **Postgres in the cluster, and the CNI.** Settled at slice 4: a plain StatefulSet and kind's default networking (ADR 0011). Slice 5 showed that it enforces NetworkPolicy.
 2. **Autoscaling.** Settled at slice 5: none, workers are scaled by hand (ADR 0012).
-3. **A public deploy, and where.** A managed cluster isn't free (build-plan `research/free-tiers-2026-11-18.md`). Options:
-   - k3s on an always-free VM.
-   - A small managed cluster brought up only for demo windows and then torn down.
-   - No public deploy, with CI's kind cluster as the deployed environment and the reason in an ADR.
-
-   Recommendation: decide at slice 6, after checking current prices and free limits, with the budget alarm first. Local-only is an honest outcome if the cost isn't worth it.
-4. **Terraform.** Only if Q3 picks a cloud cluster or VM. Then Terraform provisions it, because a hand-built cluster can't be rebuilt or reviewed. It isn't added otherwise (problem first, CLAUDE.md). Decide with Q3.
+3. **A public deploy, and where.** Settled at slice 6: a short demo window on EKS, torn down in the same run (ADR 0014).
+4. **Terraform.** Settled at slice 6: not used. AWS CDK in Python builds the demo window (ADR 0014).
 5. **The payer protocol.** Settled at slice 2: simplified JSON (ADR 0009, docs/mock-payer.md).
 6. **Synthetic members.** Settled at slice 1: they come from `synthetic-cohort`, pinned by tag (ADR 0008).
 7. **Case-study angle.** How much comparison to past professional work is safe? Public patterns only, no employer names. Decide in slice 7.

@@ -2,7 +2,7 @@
 
 Checks insurance coverage in bulk against a payer API that's slow, rate-limited and often fails. Every worker shares one rate limit, so the payer's limit is never exceeded, and every patient ends in exactly one honest state: covered, not covered, or an exception a person can work through. Results are FHIR R4. It runs on Kubernetes and keeps those promises while its pods are killed and scaled mid-batch.
 
-**Status:** early. Slices 1 to 5 and the observability half of slice 6 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It runs on a local Kubernetes cluster and keeps its promises there while pods are killed ([below](#under-chaos)); still to come are the deploy decision and a demo.
+**Status:** early. Slices 1 to 6 of [the plan](docs/spec.md#11-proposed-slice-plan-one-pr-each-after-this-spec) are built: batches go in, workers check them against a [mock payer](docs/mock-payer.md) that misbehaves on demand, and every check ends covered, not covered or as an exception, with a FHIR result. It runs on a local Kubernetes cluster and keeps its promises there while pods are killed ([below](#under-chaos)); still to come are the first measured run on AWS and a demo.
 
 On a laptop, 3,000 checks with two workers took about four minutes and passed every line of the invariant report. The pace is set by the limiter (16 a second against the payer's 20), and dips when hanging calls fill the in-flight cap. Design: [docs/spec.md](docs/spec.md) and [docs/adr/](docs/adr/).
 
@@ -85,6 +85,10 @@ make alerts
 ```
 
 Fires each of the five alerts once, on purpose, and puts everything back. What each means and what to do: [docs/runbook.md](docs/runbook.md). Where the numbers come from: [ADR 0013](docs/adr/0013-where-telemetry-comes-from.md).
+
+## On AWS, briefly
+
+A demo window creates an EKS cluster, runs the same checks and chaos on it, and destroys it ([ADR 0014](docs/adr/0014-deploy-as-a-demo-window-on-eks.md), [docs/deploy.md](docs/deploy.md)). It hasn't been run yet, so there are no figures from AWS.
 
 ## Run it with Compose
 

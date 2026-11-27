@@ -25,6 +25,13 @@ jobs:
       - run: uv run mypy
       # Integration tests start their own Postgres with Testcontainers (the runner has Docker).
       - run: uv run pytest
+      # The CDK app synthesizes with the pinned CLI. No AWS account or credentials.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx cdk synth --quiet
       # The Prometheus and collector configs, and the alert rules' own tests.
       - run: ./scripts/check_observability.sh
 
@@ -80,6 +87,8 @@ jobs:
             .cache/fhir-packages
           key: fhir-${{ hashFiles('scripts/validate_fhir.sh') }}
       - run: uv sync --locked
+      # The demo window's overlay at least renders; nothing here has an AWS account.
+      - run: ./scripts/k8s/render.sh cloud
       - run: make up OVERLAY=ci
       - run: make e2e
       # A short run: the same disruptions as the full one in chaos.yml, on a smaller batch.
